@@ -25,10 +25,12 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
-
 app.use(
   cors({
-    origin: '*',
+    origin: [
+      'http://localhost:5173',
+      'https://highway-rescue-nmhr0b544-komilabbas.vercel.app'
+    ],
     credentials: true,
   })
 );
