@@ -1,0 +1,23 @@
+{
+  "name": "highway-rescue",
+  "version": "1.0.0",
+  "description": "Highway Rescue - Help Is Always Nearby. 24x7 Roadside Vehicle Assistance Marketplace",
+  "scripts": {
+    "install-all": "cd server && npm install && cd ../client && npm install",
+    "server": "cd server && npm start",
+    "server:dev": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "build:client": "cd client && npm run build"
+  },
+  "keywords": [
+    "roadside-assistance",
+    "highway-rescue",
+    "mechanics",
+    "emergency-112",
+    "towing",
+    "ahmedabad",
+    "india"
+  ],
+  "author": "Highway Rescue Team",
+  "license": "ISC"
+}

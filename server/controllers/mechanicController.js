@@ -1,0 +1,393 @@
+const User = require('../models/User');
+const Mechanic = require('../models/Mechanic');
+const Booking = require('../models/Booking');
+const Review = require('../models/Review');
+const jwt = require('jsonwebtoken');
+const { calculateDistance } = require('../services/distanceService');
+
+const generateToken = (id) => {
+  return jwt.sign(
+    { id },
+    process.env.JWT_SECRET || 'highway_rescue_jwt_secret_key_2026_super_secure_auth',
+    { expiresIn: process.env.JWT_EXPIRES_IN || '30d' }
+  );
+};
+
+// @desc    Register a new mechanic / service provider
+// @route   POST /api/mechanics/register
+// @access  Public
+const registerMechanic = async (req, res, next) => {
+  try {
+    const {
+      name,
+      email,
+      phone,
+      password,
+      shopName,
+      services,
+      experience,
+      shopAddress,
+      city,
+      state,
+      pincode,
+      latitude,
+      longitude,
+      serviceRadius,
+    } = req.body;
+
+    if (!name || !email || !phone || !password || !shopName || !shopAddress) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide all required fields including name, email, phone, shop name, and address.',
+      });
+    }
+
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email already exists.',
+      });
+    }
+
+    // Default to Ahmedabad coordinates if not provided (23.0225, 72.5714)
+    const lat = latitude ? parseFloat(latitude) : 23.0338;
+    const lng = longitude ? parseFloat(longitude) : 72.5186;
+
+    // Parse services
+    let parsedServices = [];
+    if (typeof services === 'string') {
+      try {
+        parsedServices = JSON.parse(services);
+      } catch (e) {
+        parsedServices = services.split(',').map((s) => s.trim());
+      }
+    } else if (Array.isArray(services)) {
+      parsedServices = services;
+    }
+
+    if (!parsedServices || parsedServices.length === 0) {
+      parsedServices = ['Puncture Repair', 'General Mechanic'];
+    }
+
+    // Handle uploaded files
+    let profileImageUrl = '';
+    let idDocumentUrl = '';
+
+    if (req.files) {
+      if (req.files.profileImage && req.files.profileImage[0]) {
+        profileImageUrl = `/uploads/${req.files.profileImage[0].filename}`;
+      }
+      if (req.files.idDocument && req.files.idDocument[0]) {
+        idDocumentUrl = `/uploads/${req.files.idDocument[0].filename}`;
+      }
+    }
+
+    // Create User record
+    const user = await User.create({
+      name,
+      email: email.toLowerCase(),
+      phone,
+      password,
+      role: 'mechanic',
+    });
+
+    // Create Mechanic profile
+    const mechanic = await Mechanic.create({
+      user: user._id,
+      name,
+      phone,
+      email: email.toLowerCase(),
+      shopName,
+      services: parsedServices,
+      experience: experience ? Number(experience) : 2,
+      shopAddress,
+      city: city || 'Ahmedabad',
+      state: state || 'Gujarat',
+      pincode: pincode || '380015',
+      location: {
+        type: 'Point',
+        coordinates: [lng, lat], // GeoJSON order: [longitude, latitude]
+      },
+      serviceRadius: serviceRadius ? Number(serviceRadius) : 25,
+      profileImage: profileImageUrl,
+      idDocument: idDocumentUrl,
+      isVerified: false, // Must be verified by admin
+      isOnline: true,
+      isActive: true,
+    });
+
+    const token = generateToken(user._id);
+
+    res.status(201).json({
+      success: true,
+      message: 'Mechanic registration submitted successfully! Your account will be verified by the admin shortly.',
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+      },
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Find nearby mechanics
+// @route   GET /api/mechanics/nearby
+// @access  Public
+const getNearbyMechanics = async (req, res, next) => {
+  try {
+    const { lat, lng, radius, serviceCategory, verifiedOnly } = req.query;
+
+    // Default coordinates: Ahmedabad (SG Highway / ISCON)
+    const userLat = lat ? parseFloat(lat) : 23.0338;
+    const userLng = lng ? parseFloat(lng) : 72.5186;
+    const searchRadiusKm = radius ? parseFloat(radius) : 25; // in kilometers
+
+    const query = {
+      isActive: true,
+      isOnline: true,
+    };
+
+    if (verifiedOnly === 'true') {
+      query.isVerified = true;
+    }
+
+    if (serviceCategory && serviceCategory !== 'All') {
+      query.services = { $regex: new RegExp(serviceCategory, 'i') };
+    }
+
+    // Use MongoDB GeoJSON $geoNear or $nearSphere
+    let mechanics = [];
+    try {
+      mechanics = await Mechanic.find({
+        ...query,
+        location: {
+          $nearSphere: {
+            $geometry: {
+              type: 'Point',
+              coordinates: [userLng, userLat],
+            },
+            $maxDistance: searchRadiusKm * 1000, // meters
+          },
+        },
+      }).populate('user', 'name phone email');
+    } catch (geoErr) {
+      // Fallback if 2dsphere index is warming up
+      console.warn('[Mechanic Finder] Fallback search without geoNear:', geoErr.message);
+      mechanics = await Mechanic.find(query).populate('user', 'name phone email');
+    }
+
+    // Map distance in km for every mechanic
+    const result = mechanics.map((m) => {
+      const mechLng = m.location.coordinates[0];
+      const mechLat = m.location.coordinates[1];
+      const dist = calculateDistance(userLat, userLng, mechLat, mechLng);
+      return {
+        ...m.toObject(),
+        distanceKm: dist,
+      };
+    });
+
+    // Sort by distance
+    result.sort((a, b) => (a.distanceKm || 999) - (b.distanceKm || 999));
+
+    res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result,
+      searchCenter: { lat: userLat, lng: userLng },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get mechanic details by ID
+// @route   GET /api/mechanics/:id
+// @access  Public
+const getMechanicById = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findById(req.params.id).populate('user', 'name email phone');
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic not found',
+      });
+    }
+
+    const reviews = await Review.find({ mechanic: mechanic._id, isReported: false })
+      .populate('customer', 'name')
+      .sort('-createdAt')
+      .limit(20);
+
+    res.status(200).json({
+      success: true,
+      data: mechanic,
+      reviews,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Toggle online / offline availability
+// @route   PUT /api/mechanics/availability
+// @access  Private (Mechanic)
+const toggleAvailability = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findOne({ user: req.user._id });
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found for this user',
+      });
+    }
+
+    mechanic.isOnline = req.body.isOnline !== undefined ? req.body.isOnline : !mechanic.isOnline;
+    await mechanic.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Status updated: You are now ${mechanic.isOnline ? 'ONLINE and accepting requests' : 'OFFLINE'}`,
+      isOnline: mechanic.isOnline,
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update mechanic profile
+// @route   PUT /api/mechanics/profile
+// @access  Private (Mechanic)
+const updateMechanicProfile = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findOne({ user: req.user._id });
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found',
+      });
+    }
+
+    const {
+      shopName,
+      services,
+      experience,
+      shopAddress,
+      city,
+      state,
+      pincode,
+      latitude,
+      longitude,
+      serviceRadius,
+    } = req.body;
+
+    if (shopName) mechanic.shopName = shopName;
+    if (experience !== undefined) mechanic.experience = Number(experience);
+    if (shopAddress) mechanic.shopAddress = shopAddress;
+    if (city) mechanic.city = city;
+    if (state) mechanic.state = state;
+    if (pincode) mechanic.pincode = pincode;
+    if (serviceRadius) mechanic.serviceRadius = Number(serviceRadius);
+
+    if (services) {
+      if (Array.isArray(services)) {
+        mechanic.services = services;
+      } else if (typeof services === 'string') {
+        try {
+          mechanic.services = JSON.parse(services);
+        } catch (e) {
+          mechanic.services = services.split(',').map((s) => s.trim());
+        }
+      }
+    }
+
+    if (latitude && longitude) {
+      mechanic.location = {
+        type: 'Point',
+        coordinates: [parseFloat(longitude), parseFloat(latitude)],
+      };
+    }
+
+    if (req.files) {
+      if (req.files.profileImage && req.files.profileImage[0]) {
+        mechanic.profileImage = `/uploads/${req.files.profileImage[0].filename}`;
+      }
+      if (req.files.idDocument && req.files.idDocument[0]) {
+        mechanic.idDocument = `/uploads/${req.files.idDocument[0].filename}`;
+      }
+    }
+
+    await mechanic.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Mechanic profile updated successfully!',
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get mechanic dashboard statistics
+// @route   GET /api/mechanics/dashboard/stats
+// @access  Private (Mechanic)
+const getMechanicDashboardStats = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findOne({ user: req.user._id });
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic not found',
+      });
+    }
+
+    const totalBookings = await Booking.countDocuments({ mechanic: mechanic._id });
+    const pendingRequests = await Booking.countDocuments({
+      status: 'Pending',
+      $or: [{ mechanic: mechanic._id }, { mechanic: null }],
+    });
+    const acceptedRequests = await Booking.countDocuments({
+      mechanic: mechanic._id,
+      status: { $in: ['Accepted', 'On The Way', 'Arrived', 'In Progress'] },
+    });
+    const completedJobs = await Booking.countDocuments({
+      mechanic: mechanic._id,
+      status: 'Completed',
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalBookings,
+        pendingRequests,
+        acceptedRequests,
+        completedJobs,
+        totalEarnings: mechanic.totalEarnings || 0,
+        isOnline: mechanic.isOnline,
+        isVerified: mechanic.isVerified,
+        rating: mechanic.rating,
+        totalReviews: mechanic.totalReviews,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+module.exports = {
+  registerMechanic,
+  getNearbyMechanics,
+  getMechanicById,
+  toggleAvailability,
+  updateMechanicProfile,
+  getMechanicDashboardStats,
+};
