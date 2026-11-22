@@ -5,9 +5,10 @@ const initSocket = (server) => {
 io = new Server(server, {
   cors: {
     origin: [
-      'http://localhost:5173',
-      'https://highway-rescue-nmhr0b544-komilabbas.vercel.app'
-    ],
+  'http://localhost:5173',
+  'https://highway-rescue-nu.vercel.app',
+  'https://highway-rescue-nmhr0b544-komilabbas.vercel.app'
+],
     methods: ['GET', 'POST'],
     credentials: true,
   },
