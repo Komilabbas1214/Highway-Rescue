@@ -21,22 +21,14 @@ const createPaymentOrder = async (req, res, next) => {
     const currency = 'INR';
     const receipt = `rcpt_${booking.bookingId}_${Date.now()}`;
 
+    const rawKeyId = process.env.RAZORPAY_KEY_ID || '';
+    const isPlaceholder = !rawKeyId || rawKeyId.includes('demo123') || rawKeyId === 'rzp_test_highway_rescue_demo123';
+
     let order = null;
-    try {
-      const razorpay = getRazorpayInstance();
-      order = await razorpay.orders.create({
-        amount,
-        currency,
-        receipt,
-        notes: {
-          bookingId: booking._id.toString(),
-          bookingNumber: booking.bookingId,
-          customerName: req.user.name,
-        },
-      });
-    } catch (rzpErr) {
-      console.warn('[Razorpay] Using development test order structure:', rzpErr.message);
-      // Seamless mock order for dev/offline testing
+    let isMock = false;
+
+    if (isPlaceholder) {
+      isMock = true;
       order = {
         id: `order_test_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         amount,
@@ -44,12 +36,37 @@ const createPaymentOrder = async (req, res, next) => {
         receipt,
         status: 'created',
       };
+    } else {
+      try {
+        const razorpay = getRazorpayInstance();
+        order = await razorpay.orders.create({
+          amount,
+          currency,
+          receipt,
+          notes: {
+            bookingId: booking._id.toString(),
+            bookingNumber: booking.bookingId,
+            customerName: req.user.name,
+          },
+        });
+      } catch (rzpErr) {
+        console.warn('[Razorpay] Live order creation error, using simulator:', rzpErr.message);
+        isMock = true;
+        order = {
+          id: `order_test_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          amount,
+          currency,
+          receipt,
+          status: 'created',
+        };
+      }
     }
 
     res.status(200).json({
       success: true,
       order,
-      keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_highway_rescue_demo123',
+      isMock,
+      keyId: isMock ? null : rawKeyId,
       bookingDetails: {
         id: booking._id,
         bookingNumber: booking.bookingId,

@@ -20,10 +20,12 @@ const PaymentModal = ({ show, onClose, booking, onPaymentSuccess }) => {
         throw new Error(res.data.message || 'Failed to create payment order');
       }
 
-      const { order, keyId } = res.data;
+      const { order, keyId, isMock } = res.data;
 
-      // 2. Open Razorpay Checkout modal if loaded
-      if (window.Razorpay) {
+      const isRealRazorpayKey = !isMock && keyId && !keyId.includes('demo123') && keyId.startsWith('rzp_');
+
+      // 2. Open Razorpay Checkout modal ONLY if a genuine Razorpay merchant key is provided
+      if (isRealRazorpayKey && window.Razorpay) {
         const options = {
           key: keyId,
           amount: order.amount,
@@ -65,15 +67,15 @@ const PaymentModal = ({ show, onClose, booking, onPaymentSuccess }) => {
         });
         rzp.open();
       } else {
-        // Fallback simulation in dev environment
+        // Safe in-app test payment simulation (prevents api.razorpay.com 401 basic auth popups for placeholder keys)
         const verifyRes = await api.post('/payments/verify', {
           bookingId: booking._id,
           razorpay_order_id: order.id,
-          razorpay_payment_id: `pay_sim_${Date.now()}`,
+          razorpay_payment_id: `pay_test_${Date.now()}`,
           razorpay_signature: 'simulated_valid_signature',
         });
         if (verifyRes.data.success) {
-          toast.success('Payment completed via test simulator!');
+          toast.success(`🎉 Test Payment of ₹${amount} simulated & verified successfully!`);
           if (onPaymentSuccess) onPaymentSuccess(verifyRes.data.booking);
           onClose();
         }
