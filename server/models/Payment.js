@@ -27,7 +27,7 @@ const paymentSchema = new mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['Cash', 'Razorpay', 'UPI', 'Card'],
+      enum: ['Cash', 'Razorpay', 'UPI', 'Card', 'Online'],
       default: 'Cash',
     },
     razorpayOrderId: {
@@ -46,6 +46,22 @@ const paymentSchema = new mongoose.Schema(
       type: String,
       enum: ['Created', 'Captured', 'Failed', 'Refunded'],
       default: 'Created',
+    },
+    commissionRate: {
+      type: Number,
+      default: 0.10, // 10% platform commission
+    },
+    commissionAmount: {
+      type: Number,
+      default: 0,
+    },
+    mechanicPayout: {
+      type: Number,
+      default: 0,
+    },
+    errorMessage: {
+      type: String,
+      default: '',
     },
     notes: {
       type: String,
