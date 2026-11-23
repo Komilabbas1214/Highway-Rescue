@@ -111,7 +111,13 @@ const CustomerDashboard = () => {
   };
 
   // Handle Booking Cancellation
-  const handleCancelBooking = async (bookingId) => {
+  const handleCancelBooking = async (bookingId, currentStatus = null) => {
+    // Validate booking status before allowing cancellation on the client side
+    if (currentStatus && currentStatus !== 'Pending') {
+      toast.error('Booking cannot be cancelled because the mechanic has already accepted the request.');
+      return;
+    }
+
     const reason = window.prompt('Please enter cancellation reason (e.g. Issue resolved, vehicle started):');
     if (reason === null) return;
 
@@ -123,6 +129,8 @@ const CustomerDashboard = () => {
       }
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to cancel booking.');
+      // Refresh bookings to reflect server-side status (e.g., if mechanic just accepted)
+      fetchMyBookings();
     }
   };
 
@@ -246,14 +254,33 @@ const CustomerDashboard = () => {
                     <span className="badge bg-primary fs-6 px-3 py-1">
                       Status: {activeBooking.status}
                     </span>
-                    <button
-                      className="btn btn-outline-danger btn-sm rounded-pill"
-                      onClick={() => handleCancelBooking(activeBooking._id)}
-                    >
-                      Cancel Request
-                    </button>
+                    {activeBooking.status === 'Pending' ? (
+                      <button
+                        className="btn btn-outline-danger btn-sm rounded-pill"
+                        onClick={() => handleCancelBooking(activeBooking._id, activeBooking.status)}
+                      >
+                        <i className="bi bi-x-circle me-1"></i> Cancel Request
+                      </button>
+                    ) : (
+                      <span
+                        className="badge bg-light text-secondary border py-2 px-3 small d-inline-flex align-items-center gap-1"
+                        title="Cancellation is unavailable once a mechanic has accepted your request."
+                      >
+                        <i className="bi bi-lock-fill text-muted"></i> Cancellation Unavailable (Mechanic Assigned)
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {/* Notice when cancellation is unavailable */}
+                {activeBooking.status !== 'Pending' && activeBooking.status !== 'Completed' && (
+                  <div className="alert alert-secondary py-2 px-3 small my-3 d-flex align-items-center gap-2 rounded-3 border">
+                    <i className="bi bi-shield-lock-fill text-warning fs-6"></i>
+                    <span>
+                      <strong>Cancellation Locked:</strong> Your request has been accepted by the mechanic. Cancellation is no longer permitted once the mechanic is assigned or en route.
+                    </span>
+                  </div>
+                )}
 
                 {/* Progress Stepper */}
                 <div className="booking-progress-stepper my-4">
@@ -563,13 +590,23 @@ const CustomerDashboard = () => {
                                 Pay
                               </button>
                             )}
-                            {['Pending', 'Accepted', 'On The Way'].includes(b.status) && (
+                            {b.status === 'Pending' ? (
                               <button
                                 className="btn btn-outline-danger btn-sm py-0 px-2"
-                                onClick={() => handleCancelBooking(b._id)}
+                                title="Cancel Pending Booking"
+                                onClick={() => handleCancelBooking(b._id, b.status)}
                               >
                                 Cancel
                               </button>
+                            ) : (
+                              ['Accepted', 'On The Way', 'Arrived', 'In Progress'].includes(b.status) && (
+                                <span
+                                  className="badge bg-light text-muted border py-1 px-2 small"
+                                  title="Cancellation unavailable once accepted by mechanic."
+                                >
+                                  <i className="bi bi-lock-fill text-secondary"></i> Locked
+                                </span>
+                              )
                             )}
                           </div>
                         </td>

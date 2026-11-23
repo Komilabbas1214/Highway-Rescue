@@ -232,42 +232,49 @@ const acceptBooking = async (req, res, next) => {
       });
     }
 
-    const booking = await Booking.findById(req.params.id);
-    if (!booking) {
-      return res.status(404).json({
+    // Atomic conditional update: ONLY accept if status is still 'Pending'
+    const updatedBooking = await Booking.findOneAndUpdate(
+      { _id: req.params.id, status: 'Pending' },
+      {
+        $set: {
+          mechanic: mechanic._id,
+          status: 'Accepted',
+        },
+        $push: {
+          statusTimeline: {
+            status: 'Accepted',
+            timestamp: new Date(),
+            note: `Booking accepted by ${mechanic.name} (${mechanic.shopName}).`,
+          },
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedBooking) {
+      const existing = await Booking.findById(req.params.id);
+      if (!existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'Booking not found',
+        });
+      }
+      return res.status(409).json({
         success: false,
-        message: 'Booking not found',
+        message: `Booking cannot be accepted. It is currently in '${existing.status}' status.`,
       });
     }
 
-    // Prevent conflicting acceptance
-    if (booking.status !== 'Pending') {
-      return res.status(400).json({
-        success: false,
-        message: `Booking cannot be accepted. It is currently in '${booking.status}' status.`,
-      });
-    }
-
-    booking.mechanic = mechanic._id;
-    booking.status = 'Accepted';
-    booking.statusTimeline.push({
-      status: 'Accepted',
-      timestamp: new Date(),
-      note: `Booking accepted by ${mechanic.name} (${mechanic.shopName}).`,
-    });
-
-    await booking.save();
-
-    const populatedBooking = await Booking.findById(booking._id)
+    const populatedBooking = await Booking.findById(updatedBooking._id)
       .populate('customer', 'name phone email vehicleType vehicleNumber')
       .populate('mechanic', 'name shopName phone rating shopAddress profileImage');
 
     // Real-time update to customer & rooms
-    notifyCustomer(booking.customer.toString(), 'bookingAccepted', {
+    notifyCustomer(updatedBooking.customer.toString(), 'bookingAccepted', {
       booking: populatedBooking,
       message: `${mechanic.name} has accepted your request! Help is on the way.`,
     });
-    notifyBookingRoom(booking._id.toString(), 'bookingStatusUpdated', populatedBooking);
+    notifyBookingRoom(updatedBooking._id.toString(), 'bookingStatusUpdated', populatedBooking);
     notifyAdmin('adminBookingUpdated', populatedBooking);
 
     res.status(200).json({
@@ -416,47 +423,232 @@ const cancelBooking = async (req, res, next) => {
       });
     }
 
-    if (['Completed', 'Cancelled'].includes(booking.status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot cancel a booking that is already ${booking.status}.`,
+    // Customer cancellation logic
+    if (req.user.role === 'customer') {
+      // 1. Verify authenticated customer owns the booking
+      if (booking.customer.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden: You are not authorized to cancel another customer\'s booking.',
+        });
+      }
+
+      // 2. Customer can ONLY cancel when status is 'Pending'
+      if (booking.status !== 'Pending') {
+        if (['Accepted', 'On The Way', 'Arrived', 'In Progress'].includes(booking.status)) {
+          return res.status(409).json({
+            success: false,
+            message: 'Booking cannot be cancelled because the mechanic has already accepted the request.',
+          });
+        }
+        return res.status(409).json({
+          success: false,
+          message: `Booking cannot be cancelled because it is already ${booking.status}.`,
+        });
+      }
+
+      // 3. Atomic conditional update to prevent race conditions (e.g. mechanic accepts simultaneously)
+      const cancellationReason = reason || 'Cancelled by user';
+      const cancelledBooking = await Booking.findOneAndUpdate(
+        {
+          _id: req.params.id,
+          customer: req.user._id,
+          status: 'Pending',
+        },
+        {
+          $set: {
+            status: 'Cancelled',
+            cancellationReason,
+            cancelledBy: 'customer',
+          },
+          $push: {
+            statusTimeline: {
+              status: 'Cancelled',
+              timestamp: new Date(),
+              note: `Booking cancelled by customer. Reason: ${cancellationReason}`,
+            },
+          },
+        },
+        { new: true }
+      );
+
+      // If atomic update returned null, status changed concurrently (e.g. mechanic accepted)
+      if (!cancelledBooking) {
+        const currentBooking = await Booking.findById(req.params.id);
+        if (currentBooking && ['Accepted', 'On The Way', 'Arrived', 'In Progress'].includes(currentBooking.status)) {
+          return res.status(409).json({
+            success: false,
+            message: 'Booking cannot be cancelled because the mechanic has already accepted the request.',
+          });
+        }
+        return res.status(409).json({
+          success: false,
+          message: `Booking cannot be cancelled because it is already ${currentBooking ? currentBooking.status : 'processed'}.`,
+        });
+      }
+
+      const populatedBooking = await Booking.findById(cancelledBooking._id)
+        .populate('customer', 'name phone email')
+        .populate('mechanic', 'name shopName phone');
+
+      // Real-time Socket.IO notifications
+      if (cancelledBooking.mechanic) {
+        notifyMechanic(cancelledBooking.mechanic.toString(), 'bookingCancelled', {
+          booking: populatedBooking,
+          message: `Customer cancelled booking ${cancelledBooking.bookingId}`,
+        });
+      } else {
+        broadcastToMechanics('bookingCancelled', {
+          booking: populatedBooking,
+          message: `Booking request ${cancelledBooking.bookingId} was cancelled by the customer.`,
+        });
+      }
+      notifyCustomer(cancelledBooking.customer.toString(), 'bookingCancelled', {
+        booking: populatedBooking,
+        message: `Your booking ${cancelledBooking.bookingId} was successfully cancelled.`,
+      });
+      notifyBookingRoom(cancelledBooking._id.toString(), 'bookingCancelled', populatedBooking);
+      notifyAdmin('adminBookingCancelled', populatedBooking);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Booking cancelled successfully.',
+        booking: populatedBooking,
       });
     }
 
-    booking.status = 'Cancelled';
-    booking.cancellationReason = reason || 'Cancelled by user';
-    booking.cancelledBy = req.user.role;
-    booking.statusTimeline.push({
-      status: 'Cancelled',
-      timestamp: new Date(),
-      note: `Booking cancelled by ${req.user.role}. Reason: ${reason || 'Not specified'}`,
-    });
+    // Mechanic cancellation workflow
+    if (req.user.role === 'mechanic') {
+      const mechanic = await Mechanic.findOne({ user: req.user._id });
+      if (!mechanic) {
+        return res.status(403).json({
+          success: false,
+          message: 'Mechanic profile not found.',
+        });
+      }
 
-    await booking.save();
+      if (booking.mechanic && booking.mechanic.toString() !== mechanic._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden: You are not assigned to this booking.',
+        });
+      }
 
-    const populatedBooking = await Booking.findById(booking._id)
-      .populate('customer', 'name phone email')
-      .populate('mechanic', 'name shopName phone');
+      if (['Completed', 'Cancelled'].includes(booking.status)) {
+        return res.status(409).json({
+          success: false,
+          message: `Cannot cancel a booking that is already ${booking.status}.`,
+        });
+      }
 
-    // Notify respective parties
-    if (req.user.role === 'customer' && booking.mechanic) {
-      notifyMechanic(booking.mechanic._id.toString(), 'bookingCancelled', {
+      const cancellationReason = reason || 'Cancelled by mechanic';
+      const cancelledBooking = await Booking.findOneAndUpdate(
+        {
+          _id: req.params.id,
+          mechanic: mechanic._id,
+          status: { $nin: ['Completed', 'Cancelled'] },
+        },
+        {
+          $set: {
+            status: 'Cancelled',
+            cancellationReason,
+            cancelledBy: 'mechanic',
+          },
+          $push: {
+            statusTimeline: {
+              status: 'Cancelled',
+              timestamp: new Date(),
+              note: `Booking cancelled by mechanic. Reason: ${cancellationReason}`,
+            },
+          },
+        },
+        { new: true }
+      );
+
+      if (!cancelledBooking) {
+        return res.status(409).json({
+          success: false,
+          message: 'Failed to cancel booking. It may have already been completed or cancelled.',
+        });
+      }
+
+      const populatedBooking = await Booking.findById(cancelledBooking._id)
+        .populate('customer', 'name phone email')
+        .populate('mechanic', 'name shopName phone');
+
+      notifyCustomer(cancelledBooking.customer._id.toString(), 'bookingCancelled', {
         booking: populatedBooking,
-        message: `Customer cancelled booking ${booking.bookingId}`,
+        message: `Mechanic cancelled booking ${cancelledBooking.bookingId}. Re-broadcasting...`,
       });
-    } else if (req.user.role === 'mechanic') {
-      notifyCustomer(booking.customer._id.toString(), 'bookingCancelled', {
+      notifyBookingRoom(cancelledBooking._id.toString(), 'bookingCancelled', populatedBooking);
+      notifyAdmin('adminBookingCancelled', populatedBooking);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Booking cancelled successfully.',
         booking: populatedBooking,
-        message: `Mechanic cancelled booking ${booking.bookingId}. Re-broadcasting...`,
       });
     }
-    notifyBookingRoom(booking._id.toString(), 'bookingCancelled', populatedBooking);
-    notifyAdmin('adminBookingCancelled', populatedBooking);
 
-    res.status(200).json({
-      success: true,
-      message: 'Booking cancelled successfully.',
-      booking: populatedBooking,
+    // Admin cancellation workflow
+    if (req.user.role === 'admin') {
+      if (['Completed', 'Cancelled'].includes(booking.status)) {
+        return res.status(409).json({
+          success: false,
+          message: `Cannot cancel a booking that is already ${booking.status}.`,
+        });
+      }
+
+      const cancellationReason = reason || 'Cancelled by admin';
+      const cancelledBooking = await Booking.findOneAndUpdate(
+        {
+          _id: req.params.id,
+          status: { $nin: ['Completed', 'Cancelled'] },
+        },
+        {
+          $set: {
+            status: 'Cancelled',
+            cancellationReason,
+            cancelledBy: 'admin',
+          },
+          $push: {
+            statusTimeline: {
+              status: 'Cancelled',
+              timestamp: new Date(),
+              note: `Booking cancelled by admin. Reason: ${cancellationReason}`,
+            },
+          },
+        },
+        { new: true }
+      );
+
+      const populatedBooking = await Booking.findById(cancelledBooking._id)
+        .populate('customer', 'name phone email')
+        .populate('mechanic', 'name shopName phone');
+
+      if (cancelledBooking.mechanic) {
+        notifyMechanic(cancelledBooking.mechanic.toString(), 'bookingCancelled', {
+          booking: populatedBooking,
+          message: `Admin cancelled booking ${cancelledBooking.bookingId}`,
+        });
+      }
+      notifyCustomer(cancelledBooking.customer._id.toString(), 'bookingCancelled', {
+        booking: populatedBooking,
+        message: `Admin cancelled booking ${cancelledBooking.bookingId}.`,
+      });
+      notifyBookingRoom(cancelledBooking._id.toString(), 'bookingCancelled', populatedBooking);
+      notifyAdmin('adminBookingCancelled', populatedBooking);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Booking cancelled successfully.',
+        booking: populatedBooking,
+      });
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: 'Unauthorized role for cancellation.',
     });
   } catch (error) {
     next(error);

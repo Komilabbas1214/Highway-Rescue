@@ -101,6 +101,8 @@ const startServer = async () => {
   }
 };
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
 
-module.exports = { app, server };
+module.exports = { app, server, startServer };
