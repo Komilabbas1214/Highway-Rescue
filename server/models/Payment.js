@@ -59,6 +59,31 @@ const paymentSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    commissionAmountPaise: {
+      type: Number,
+      default: 0,
+    },
+    mechanicPayoutPaise: {
+      type: Number,
+      default: 0,
+    },
+    settlementStatus: {
+      type: String,
+      enum: ['Pending', 'Settled', 'Disputed', 'Deducted'],
+      default: 'Pending',
+    },
+    settlementReference: {
+      type: String,
+      default: '',
+    },
+    settledAt: {
+      type: Date,
+      default: null,
+    },
+    settlementNotes: {
+      type: String,
+      default: '',
+    },
     errorMessage: {
       type: String,
       default: '',

@@ -3,6 +3,7 @@ const Mechanic = require('../models/Mechanic');
 const Booking = require('../models/Booking');
 const Review = require('../models/Review');
 const Payment = require('../models/Payment');
+const CommissionSettlement = require('../models/CommissionSettlement');
 const { notifyMechanic, notifyCustomer } = require('../services/socketService');
 
 // @desc    Admin dashboard metrics summary
@@ -305,6 +306,386 @@ const deleteReview = async (req, res, next) => {
   }
 };
 
+// @desc    Get detailed platform commission & settlement analytics
+// @route   GET /api/admin/earnings
+// @access  Private (Admin)
+const getAdminEarnings = async (req, res, next) => {
+  try {
+    const { timeRange, startDate, endDate, mechanicId } = req.query;
+
+    const query = {
+      status: 'Completed',
+      paymentStatus: 'Paid',
+    };
+
+    if (mechanicId) {
+      query.mechanic = mechanicId;
+    }
+
+    // Time range filter
+    if (timeRange === 'today') {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      query.createdAt = { $gte: startOfDay };
+    } else if (timeRange === '7days') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      query.createdAt = { $gte: sevenDaysAgo };
+    } else if (timeRange === '30days') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      query.createdAt = { $gte: thirtyDaysAgo };
+    } else if (startDate && endDate) {
+      query.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
+    }
+
+    // Completed & paid bookings
+    const bookings = await Booking.find(query)
+      .populate('customer', 'name phone email vehicleNumber')
+      .populate('mechanic', 'name shopName phone rating location')
+      .sort('-createdAt');
+
+    // Metrics calculations
+    const totalCompletedBookings = bookings.length;
+    let grossBookingValue = 0;
+    let totalPlatformCommission = 0;
+    let commissionCollected = 0;
+    let outstandingCommission = 0;
+    let mechanicPayoutsDue = 0;
+
+    bookings.forEach((b) => {
+      const gross = b.finalCost || b.estimatedCost || 400;
+      grossBookingValue += gross;
+
+      // Platform commission 10%
+      const commRate = b.commissionRate || 0.10;
+      const platformComm = b.platformCommission > 0
+        ? b.platformCommission
+        : Math.round(gross * commRate * 100) / 100;
+      const mechEarning = b.mechanicEarning > 0
+        ? b.mechanicEarning
+        : Math.round((gross - platformComm) * 100) / 100;
+
+      totalPlatformCommission += platformComm;
+
+      if (b.paymentMethod === 'Online') {
+        // Platform already collected full payment from Razorpay
+        commissionCollected += platformComm;
+        if (b.settlementStatus === 'Pending') {
+          mechanicPayoutsDue += mechEarning;
+        }
+      } else {
+        // Cash payment: Customer handed cash to mechanic
+        if (b.settlementStatus === 'Settled') {
+          commissionCollected += platformComm;
+        } else {
+          // Mechanic holds cash, owes 10% platform commission
+          outstandingCommission += platformComm;
+        }
+      }
+    });
+
+    // Mechanic-wise aggregated report
+    const allMechanics = await Mechanic.find({ isVerified: true });
+    const mechanicReports = allMechanics.map((m) => {
+      const mechBookings = bookings.filter(
+        (b) => b.mechanic && b.mechanic._id.toString() === m._id.toString()
+      );
+
+      let mGross = 0;
+      let mCommission = 0;
+      let mEarning = 0;
+      let mCashCollected = 0;
+      let mOnlineEarning = 0;
+      let mCashCommissionOwed = 0;
+      let mOnlinePayoutPending = 0;
+      const pendingBookingIds = [];
+
+      mechBookings.forEach((b) => {
+        const gross = b.finalCost || b.estimatedCost || 400;
+        mGross += gross;
+        const comm = b.platformCommission > 0
+          ? b.platformCommission
+          : Math.round(gross * (b.commissionRate || 0.10) * 100) / 100;
+        const earn = b.mechanicEarning > 0
+          ? b.mechanicEarning
+          : Math.round((gross - comm) * 100) / 100;
+
+        mCommission += comm;
+        mEarning += earn;
+
+        if (b.paymentMethod === 'Cash') {
+          mCashCollected += gross;
+          if (b.settlementStatus === 'Pending') {
+            mCashCommissionOwed += comm;
+            pendingBookingIds.push(b._id);
+          }
+        } else {
+          mOnlineEarning += earn;
+          if (b.settlementStatus === 'Pending') {
+            mOnlinePayoutPending += earn;
+            pendingBookingIds.push(b._id);
+          }
+        }
+      });
+
+      // Net balance: positive means platform owes mechanic, negative means mechanic owes platform
+      const netBalance = Math.round((mOnlinePayoutPending - mCashCommissionOwed) * 100) / 100;
+
+      return {
+        mechanicId: m._id,
+        name: m.name,
+        shopName: m.shopName,
+        phone: m.phone,
+        totalJobs: mechBookings.length,
+        grossRevenue: Math.round(mGross * 100) / 100,
+        platformCommission: Math.round(mCommission * 100) / 100,
+        mechanicEarnings: Math.round(mEarning * 100) / 100,
+        cashCollected: Math.round(mCashCollected * 100) / 100,
+        cashCommissionOwed: Math.round(mCashCommissionOwed * 100) / 100,
+        onlinePayoutPending: Math.round(mOnlinePayoutPending * 100) / 100,
+        netBalance,
+        pendingBookingIds,
+      };
+    });
+
+    // Recent settlements ledger
+    const settlementHistory = await CommissionSettlement.find()
+      .populate('mechanic', 'name shopName phone')
+      .populate('processedBy', 'name email')
+      .sort('-createdAt')
+      .limit(50);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          totalCompletedBookings,
+          grossBookingValue: Math.round(grossBookingValue * 100) / 100,
+          totalPlatformCommission: Math.round(totalPlatformCommission * 100) / 100,
+          commissionCollected: Math.round(commissionCollected * 100) / 100,
+          outstandingCommission: Math.round(outstandingCommission * 100) / 100,
+          mechanicPayoutsDue: Math.round(mechanicPayoutsDue * 100) / 100,
+        },
+        mechanicReports: mechanicReports.filter((r) => r.totalJobs > 0 || r.netBalance !== 0),
+        settlementHistory,
+        recentBookings: bookings.slice(0, 20),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Admin reconciles cash commission collected from mechanic
+// @route   POST /api/admin/settlements/reconcile-cash
+// @access  Private (Admin)
+const reconcileCashCommission = async (req, res, next) => {
+  try {
+    const { mechanicId, bookingIds, referenceNumber, paymentMethod, notes } = req.body;
+
+    if (!mechanicId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Mechanic ID is required.',
+      });
+    }
+
+    const mechanic = await Mechanic.findById(mechanicId);
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic not found.',
+      });
+    }
+
+    // Find pending cash bookings for this mechanic
+    const bookingQuery = {
+      mechanic: mechanicId,
+      paymentMethod: 'Cash',
+      paymentStatus: 'Paid',
+      settlementStatus: 'Pending',
+    };
+
+    if (Array.isArray(bookingIds) && bookingIds.length > 0) {
+      bookingQuery._id = { $in: bookingIds };
+    }
+
+    const bookingsToReconcile = await Booking.find(bookingQuery);
+
+    if (bookingsToReconcile.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending cash bookings found to reconcile.',
+      });
+    }
+
+    const refNo = referenceNumber || `CASH-REC-${Date.now()}`;
+    let totalReconciledCommission = 0;
+    const reconciledBookingIds = [];
+
+    for (const b of bookingsToReconcile) {
+      const comm = b.platformCommission > 0
+        ? b.platformCommission
+        : Math.round((b.finalCost || b.estimatedCost || 400) * 0.10 * 100) / 100;
+      totalReconciledCommission += comm;
+      reconciledBookingIds.push(b._id);
+
+      b.settlementStatus = 'Settled';
+      b.settlementReference = refNo;
+      b.settledAt = new Date();
+      b.settlementNotes = notes || 'Cash commission reconciled by admin';
+      await b.save();
+
+      // Update associated payment record
+      await Payment.updateMany(
+        { booking: b._id },
+        {
+          $set: {
+            settlementStatus: 'Settled',
+            settlementReference: refNo,
+            settledAt: new Date(),
+          },
+        }
+      );
+    }
+
+    // Create Settlement ledger entry
+    const settlementRecord = await CommissionSettlement.create({
+      settlementId: `STL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      mechanic: mechanic._id,
+      settlementType: 'Cash_Commission_Reconciliation',
+      bookings: reconciledBookingIds,
+      amount: Math.round(totalReconciledCommission * 100) / 100,
+      amountPaise: Math.round(totalReconciledCommission * 100),
+      paymentMethod: paymentMethod || 'Cash_Reconciled',
+      referenceNumber: refNo,
+      status: 'Completed',
+      processedBy: req.user._id,
+      notes: notes || `Reconciled ${bookingsToReconcile.length} cash commission bookings.`,
+    });
+
+    // Real-time notification to mechanic
+    notifyMechanic(mechanic._id.toString(), 'settlementUpdated', {
+      type: 'Cash_Commission_Reconciled',
+      amount: totalReconciledCommission,
+      referenceNumber: refNo,
+      message: `Your cash commission of ₹${totalReconciledCommission} for ${bookingsToReconcile.length} bookings was reconciled.`,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully reconciled ₹${totalReconciledCommission} cash commission across ${bookingsToReconcile.length} bookings.`,
+      settlement: settlementRecord,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Admin transfers / records payout to mechanic for online payments
+// @route   POST /api/admin/settlements/payout-mechanic
+// @access  Private (Admin)
+const payoutMechanic = async (req, res, next) => {
+  try {
+    const { mechanicId, bookingIds, referenceNumber, paymentMethod, notes } = req.body;
+
+    if (!mechanicId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Mechanic ID is required.',
+      });
+    }
+
+    const mechanic = await Mechanic.findById(mechanicId);
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic not found.',
+      });
+    }
+
+    const bookingQuery = {
+      mechanic: mechanicId,
+      paymentMethod: 'Online',
+      paymentStatus: 'Paid',
+      settlementStatus: 'Pending',
+    };
+
+    if (Array.isArray(bookingIds) && bookingIds.length > 0) {
+      bookingQuery._id = { $in: bookingIds };
+    }
+
+    const bookingsToPayout = await Booking.find(bookingQuery);
+
+    if (bookingsToPayout.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending online earnings found for payout.',
+      });
+    }
+
+    const refNo = referenceNumber || `PAYOUT-${Date.now()}`;
+    let totalPayoutAmount = 0;
+    const paidBookingIds = [];
+
+    for (const b of bookingsToPayout) {
+      const gross = b.finalCost || b.estimatedCost || 400;
+      const earning = b.mechanicEarning > 0
+        ? b.mechanicEarning
+        : Math.round((gross - (gross * 0.10)) * 100) / 100;
+      totalPayoutAmount += earning;
+      paidBookingIds.push(b._id);
+
+      b.settlementStatus = 'Settled';
+      b.settlementReference = refNo;
+      b.settledAt = new Date();
+      b.settlementNotes = notes || 'Online earnings payout disbursed by admin';
+      await b.save();
+
+      await Payment.updateMany(
+        { booking: b._id },
+        {
+          $set: {
+            settlementStatus: 'Settled',
+            settlementReference: refNo,
+            settledAt: new Date(),
+          },
+        }
+      );
+    }
+
+    const settlementRecord = await CommissionSettlement.create({
+      settlementId: `STL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      mechanic: mechanic._id,
+      settlementType: 'Mechanic_Payout',
+      bookings: paidBookingIds,
+      amount: Math.round(totalPayoutAmount * 100) / 100,
+      amountPaise: Math.round(totalPayoutAmount * 100),
+      paymentMethod: paymentMethod || 'Bank_Transfer',
+      referenceNumber: refNo,
+      status: 'Completed',
+      processedBy: req.user._id,
+      notes: notes || `Disbursed payout for ${bookingsToPayout.length} online bookings.`,
+    });
+
+    notifyMechanic(mechanic._id.toString(), 'settlementUpdated', {
+      type: 'Online_Earnings_Paid',
+      amount: totalPayoutAmount,
+      referenceNumber: refNo,
+      message: `Your online service earnings payout of ₹${totalPayoutAmount} was processed (Ref: ${refNo}).`,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully recorded payout of ₹${totalPayoutAmount} across ${bookingsToPayout.length} bookings.`,
+      settlement: settlementRecord,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAdminDashboard,
   getAllUsers,
@@ -315,4 +696,7 @@ module.exports = {
   getAllBookings,
   getAllReviews,
   deleteReview,
+  getAdminEarnings,
+  reconcileCashCommission,
+  payoutMechanic,
 };

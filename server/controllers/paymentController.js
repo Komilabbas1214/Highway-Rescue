@@ -229,10 +229,19 @@ const verifyPayment = async (req, res, next) => {
       commissionRate,
       commissionAmount,
       mechanicPayout,
+      commissionAmountPaise: Math.round(commissionAmount * 100),
+      mechanicPayoutPaise: Math.round(mechanicPayout * 100),
+      settlementStatus: 'Pending',
       notes: `Online payment completed via Razorpay. Order: ${razorpay_order_id || 'simulated'}`,
     });
 
-    // Update booking record
+    // Update booking record with commission and settlement tracking
+    booking.commissionRate = commissionRate;
+    booking.platformCommission = commissionAmount;
+    booking.mechanicEarning = mechanicPayout;
+    booking.commissionPaise = Math.round(commissionAmount * 100);
+    booking.mechanicEarningPaise = Math.round(mechanicPayout * 100);
+    booking.settlementStatus = 'Pending';
     booking.paymentMethod = 'Online';
     booking.paymentStatus = 'Paid';
     booking.paymentId = payment._id;
@@ -381,9 +390,18 @@ const markCashPayment = async (req, res, next) => {
       commissionRate,
       commissionAmount,
       mechanicPayout,
+      commissionAmountPaise: Math.round(commissionAmount * 100),
+      mechanicPayoutPaise: Math.round(mechanicPayout * 100),
+      settlementStatus: 'Pending',
       notes: 'Direct cash payment handed to mechanic upon service completion.',
     });
 
+    booking.commissionRate = commissionRate;
+    booking.platformCommission = commissionAmount;
+    booking.mechanicEarning = mechanicPayout;
+    booking.commissionPaise = Math.round(commissionAmount * 100);
+    booking.mechanicEarningPaise = Math.round(mechanicPayout * 100);
+    booking.settlementStatus = 'Pending';
     booking.paymentMethod = 'Cash';
     booking.paymentStatus = 'Paid';
     booking.paymentId = payment._id;

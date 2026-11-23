@@ -107,6 +107,44 @@ const bookingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Payment',
     },
+    // Platform Commission & Settlement Tracking
+    commissionRate: {
+      type: Number,
+      default: 0.10, // Default 10% platform commission
+    },
+    platformCommission: {
+      type: Number,
+      default: 0,
+    },
+    mechanicEarning: {
+      type: Number,
+      default: 0,
+    },
+    commissionPaise: {
+      type: Number,
+      default: 0,
+    },
+    mechanicEarningPaise: {
+      type: Number,
+      default: 0,
+    },
+    settlementStatus: {
+      type: String,
+      enum: ['Pending', 'Settled', 'Disputed', 'Deducted'],
+      default: 'Pending',
+    },
+    settlementReference: {
+      type: String,
+      default: '',
+    },
+    settledAt: {
+      type: Date,
+      default: null,
+    },
+    settlementNotes: {
+      type: String,
+      default: '',
+    },
     cancellationReason: {
       type: String,
       default: '',

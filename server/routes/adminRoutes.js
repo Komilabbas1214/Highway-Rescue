@@ -10,6 +10,9 @@ const {
   getAllBookings,
   getAllReviews,
   deleteReview,
+  getAdminEarnings,
+  reconcileCashCommission,
+  payoutMechanic,
 } = require('../controllers/adminController');
 const { protect } = require('../middleware/authMiddleware');
 const { authorize } = require('../middleware/roleMiddleware');
@@ -28,5 +31,10 @@ router.put('/mechanics/:id/toggle-active', toggleMechanicActive);
 router.get('/bookings', getAllBookings);
 router.get('/reviews', getAllReviews);
 router.delete('/reviews/:id', deleteReview);
+
+// Platform Commission & Settlements
+router.get('/earnings', getAdminEarnings);
+router.post('/settlements/reconcile-cash', reconcileCashCommission);
+router.post('/settlements/payout-mechanic', payoutMechanic);
 
 module.exports = router;

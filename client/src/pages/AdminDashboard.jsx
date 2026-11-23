@@ -31,6 +31,31 @@ const AdminDashboard = () => {
     estimatedPrice: 300,
   });
 
+  // Commission & Settlements State
+  const [earningsData, setEarningsData] = useState(null);
+  const [timeRange, setTimeRange] = useState('all');
+  const [settlementModal, setSettlementModal] = useState({
+    show: false,
+    type: 'reconcile-cash',
+    mechanic: null,
+    bookingIds: [],
+    amount: 0,
+    referenceNumber: '',
+    paymentMethod: 'UPI',
+    notes: '',
+  });
+
+  const fetchEarnings = async (range = timeRange) => {
+    try {
+      const res = await api.get('/admin/earnings', { params: { timeRange: range } });
+      if (res.data.success) {
+        setEarningsData(res.data.data);
+      }
+    } catch (err) {
+      console.warn('Failed to load admin earnings:', err);
+    }
+  };
+
   // Load Overview Data
   const fetchDashboard = async () => {
     try {
@@ -119,7 +144,51 @@ const AdminDashboard = () => {
     if (activeTab === 'services') fetchServices();
     if (activeTab === 'reviews') fetchReviews();
     if (activeTab === 'contacts') fetchContacts();
+    if (activeTab === 'earnings') fetchEarnings();
   }, [activeTab, bookingStatusFilter, mechanicFilter]);
+
+  // Open Settlement Modal
+  const handleOpenSettlement = (type, report) => {
+    const isCash = type === 'reconcile-cash';
+    setSettlementModal({
+      show: true,
+      type,
+      mechanic: { _id: report.mechanicId, name: report.name, shopName: report.shopName },
+      bookingIds: report.pendingBookingIds || [],
+      amount: isCash ? report.cashCommissionOwed : report.onlinePayoutPending,
+      referenceNumber: `${isCash ? 'CASH-REC' : 'PAYOUT'}-${Date.now().toString().slice(-6)}`,
+      paymentMethod: isCash ? 'Cash_Reconciled' : 'Bank_Transfer',
+      notes: isCash ? 'Cash commission reconciled' : 'Online payout disbursed',
+    });
+  };
+
+  // Submit Settlement
+  const handleSettlementSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const endpoint =
+        settlementModal.type === 'reconcile-cash'
+          ? '/admin/settlements/reconcile-cash'
+          : '/admin/settlements/payout-mechanic';
+
+      const res = await api.post(endpoint, {
+        mechanicId: settlementModal.mechanic._id,
+        bookingIds: settlementModal.bookingIds,
+        referenceNumber: settlementModal.referenceNumber,
+        paymentMethod: settlementModal.paymentMethod,
+        notes: settlementModal.notes,
+      });
+
+      if (res.data.success) {
+        toast.success(res.data.message);
+        setSettlementModal((prev) => ({ ...prev, show: false }));
+        fetchEarnings();
+        fetchDashboard();
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Settlement failed');
+    }
+  };
 
   // Block/Unblock User
   const handleToggleBlock = async (userId) => {
@@ -241,6 +310,17 @@ const AdminDashboard = () => {
               onClick={() => setActiveTab('overview')}
             >
               <i className="bi bi-grid-fill me-1"></i> Overview
+            </button>
+          </li>
+          <li className="nav-item">
+            <button
+              className={`nav-link rounded-pill fw-semibold ${activeTab === 'earnings' ? 'active bg-navy-rescue' : 'text-dark bg-white border'}`}
+              onClick={() => {
+                setActiveTab('earnings');
+                fetchEarnings();
+              }}
+            >
+              <i className="bi bi-cash-coin me-1"></i> Commission & Settlements
             </button>
           </li>
           <li className="nav-item">
@@ -794,7 +874,365 @@ const AdminDashboard = () => {
             )}
           </div>
         )}
+
+        {/* TAB 8: COMMISSION & SETTLEMENTS */}
+        {activeTab === 'earnings' && (
+          <div>
+            {/* Header & Date Filters */}
+            <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+              <div>
+                <h5 className="fw-bold text-navy mb-0">Platform 10% Commission & Financial Settlements</h5>
+                <small className="text-muted">
+                  Automated 10% platform share deduction, cash commission reconciliation, and mechanic payouts.
+                </small>
+              </div>
+
+              {/* Date Filters */}
+              <div className="btn-group" role="group">
+                <button
+                  type="button"
+                  className={`btn btn-sm ${timeRange === 'all' ? 'btn-navy-rescue' : 'btn-outline-secondary bg-white'}`}
+                  onClick={() => {
+                    setTimeRange('all');
+                    fetchEarnings('all');
+                  }}
+                >
+                  All Time
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${timeRange === 'today' ? 'btn-navy-rescue' : 'btn-outline-secondary bg-white'}`}
+                  onClick={() => {
+                    setTimeRange('today');
+                    fetchEarnings('today');
+                  }}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${timeRange === '7days' ? 'btn-navy-rescue' : 'btn-outline-secondary bg-white'}`}
+                  onClick={() => {
+                    setTimeRange('7days');
+                    fetchEarnings('7days');
+                  }}
+                >
+                  Last 7 Days
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${timeRange === '30days' ? 'btn-navy-rescue' : 'btn-outline-secondary bg-white'}`}
+                  onClick={() => {
+                    setTimeRange('30days');
+                    fetchEarnings('30days');
+                  }}
+                >
+                  Last 30 Days
+                </button>
+              </div>
+            </div>
+
+            {earningsData ? (
+              <>
+                {/* 6 Key Financial Metric Cards */}
+                <div className="row g-3 mb-4">
+                  <div className="col-lg-2 col-md-4 col-sm-6">
+                    <div className="card p-3 border-0 shadow-sm rounded-3 bg-white h-100">
+                      <span className="text-muted small fw-semibold">Completed Bookings</span>
+                      <h4 className="fw-bold text-dark mb-0 mt-1">{earningsData.summary.totalCompletedBookings}</h4>
+                      <small className="text-muted mt-auto">Paid jobs</small>
+                    </div>
+                  </div>
+
+                  <div className="col-lg-2 col-md-4 col-sm-6">
+                    <div className="card p-3 border-0 shadow-sm rounded-3 bg-white h-100">
+                      <span className="text-muted small fw-semibold">Gross Booking Value</span>
+                      <h4 className="fw-bold text-primary mb-0 mt-1">₹{earningsData.summary.grossBookingValue}</h4>
+                      <small className="text-muted mt-auto">Total billed</small>
+                    </div>
+                  </div>
+
+                  <div className="col-lg-2 col-md-4 col-sm-6">
+                    <div className="card p-3 border-0 shadow-sm rounded-3 bg-white h-100">
+                      <span className="text-muted small fw-semibold">10% Platform Commission</span>
+                      <h4 className="fw-bold text-success mb-0 mt-1">₹{earningsData.summary.totalPlatformCommission}</h4>
+                      <small className="text-success mt-auto">Platform gross share</small>
+                    </div>
+                  </div>
+
+                  <div className="col-lg-2 col-md-4 col-sm-6">
+                    <div className="card p-3 border-0 shadow-sm rounded-3 bg-white h-100">
+                      <span className="text-muted small fw-semibold">Commission Collected</span>
+                      <h4 className="fw-bold text-navy mb-0 mt-1">₹{earningsData.summary.commissionCollected}</h4>
+                      <small className="text-muted mt-auto">In platform account</small>
+                    </div>
+                  </div>
+
+                  <div className="col-lg-2 col-md-4 col-sm-6">
+                    <div className="card p-3 border-0 shadow-sm rounded-3 bg-white h-100">
+                      <span className="text-muted small fw-semibold">Outstanding Cash Comm.</span>
+                      <h4 className="fw-bold text-danger mb-0 mt-1">₹{earningsData.summary.outstandingCommission}</h4>
+                      <small className="text-danger mt-auto">With mechanics</small>
+                    </div>
+                  </div>
+
+                  <div className="col-lg-2 col-md-4 col-sm-6">
+                    <div className="card p-3 border-0 shadow-sm rounded-3 bg-white h-100">
+                      <span className="text-muted small fw-semibold">Mechanic Payouts Due</span>
+                      <h4 className="fw-bold text-warning text-dark mb-0 mt-1">₹{earningsData.summary.mechanicPayoutsDue}</h4>
+                      <small className="text-muted mt-auto">Online 90% share</small>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION: Mechanic-Wise Commission & Settlement Report */}
+                <div className="card rescue-card p-4 mb-4 border-0 shadow-sm bg-white">
+                  <div className="d-flex justify-content-between align-items-center mb-3">
+                    <h6 className="fw-bold text-dark mb-0">Mechanic-Wise Commission & Payout Status</h6>
+                    <span className="badge bg-light text-dark border">
+                      {earningsData.mechanicReports.length} Active Partners
+                    </span>
+                  </div>
+
+                  {earningsData.mechanicReports.length === 0 ? (
+                    <p className="text-muted small mb-0">No mechanic reports available for the selected period.</p>
+                  ) : (
+                    <div className="table-responsive">
+                      <table className="table table-hover align-middle small">
+                        <thead className="table-light">
+                          <tr>
+                            <th>Mechanic / Garage</th>
+                            <th>Jobs</th>
+                            <th>Gross Billed</th>
+                            <th>10% Comm.</th>
+                            <th>90% Earning</th>
+                            <th>Cash Held</th>
+                            <th>Cash Comm. Owed</th>
+                            <th>Online Payout Due</th>
+                            <th>Net Balance</th>
+                            <th>Reconciliation Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {earningsData.mechanicReports.map((report) => (
+                            <tr key={report.mechanicId}>
+                              <td>
+                                <strong className="text-dark d-block">{report.shopName}</strong>
+                                <small className="text-muted">{report.name} • {report.phone}</small>
+                              </td>
+                              <td><span className="badge bg-light text-dark border">{report.totalJobs}</span></td>
+                              <td>₹{report.grossRevenue}</td>
+                              <td className="text-success fw-bold">₹{report.platformCommission}</td>
+                              <td>₹{report.mechanicEarnings}</td>
+                              <td>₹{report.cashCollected}</td>
+                              <td className="text-danger fw-bold">
+                                {report.cashCommissionOwed > 0 ? `₹${report.cashCommissionOwed}` : '₹0'}
+                              </td>
+                              <td className="text-primary fw-bold">
+                                {report.onlinePayoutPending > 0 ? `₹${report.onlinePayoutPending}` : '₹0'}
+                              </td>
+                              <td>
+                                {report.netBalance > 0 ? (
+                                  <span className="badge bg-primary">Platform Owes ₹{report.netBalance}</span>
+                                ) : report.netBalance < 0 ? (
+                                  <span className="badge bg-danger">Mechanic Owes ₹{Math.abs(report.netBalance)}</span>
+                                ) : (
+                                  <span className="badge bg-success">Settled (₹0)</span>
+                                )}
+                              </td>
+                              <td>
+                                <div className="d-flex gap-1">
+                                  {report.cashCommissionOwed > 0 && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline-danger btn-sm py-1 px-2"
+                                      title="Reconcile Cash Commission"
+                                      onClick={() => handleOpenSettlement('reconcile-cash', report)}
+                                    >
+                                      Reconcile Cash
+                                    </button>
+                                  )}
+                                  {report.onlinePayoutPending > 0 && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline-success btn-sm py-1 px-2"
+                                      title="Disburse Online Payout"
+                                      onClick={() => handleOpenSettlement('payout-mechanic', report)}
+                                    >
+                                      Pay Mechanic
+                                    </button>
+                                  )}
+                                  {report.cashCommissionOwed === 0 && report.onlinePayoutPending === 0 && (
+                                    <span className="text-muted small">All Settled</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* SECTION: Settlement History Ledger */}
+                <div className="card rescue-card p-4 border-0 shadow-sm bg-white">
+                  <h6 className="fw-bold text-dark mb-3">Settlement History Ledger</h6>
+                  {earningsData.settlementHistory.length === 0 ? (
+                    <p className="text-muted small mb-0">No settlement history logged yet.</p>
+                  ) : (
+                    <div className="table-responsive">
+                      <table className="table table-hover align-middle small">
+                        <thead className="table-light">
+                          <tr>
+                            <th>Settlement ID</th>
+                            <th>Date</th>
+                            <th>Mechanic</th>
+                            <th>Settlement Type</th>
+                            <th>Amount</th>
+                            <th>Payment Method</th>
+                            <th>Reference</th>
+                            <th>Processed By</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {earningsData.settlementHistory.map((s) => (
+                            <tr key={s._id}>
+                              <td><strong className="text-navy">{s.settlementId}</strong></td>
+                              <td>{new Date(s.createdAt).toLocaleDateString('en-IN')}</td>
+                              <td>{s.mechanic?.shopName || s.mechanic?.name}</td>
+                              <td>
+                                <span
+                                  className={`badge ${
+                                    s.settlementType === 'Cash_Commission_Reconciliation'
+                                      ? 'bg-danger bg-opacity-10 text-danger border border-danger'
+                                      : 'bg-success bg-opacity-10 text-success border border-success'
+                                  }`}
+                                >
+                                  {s.settlementType.replace(/_/g, ' ')}
+                                </span>
+                              </td>
+                              <td><strong className="text-dark">₹{s.amount}</strong></td>
+                              <td><span className="badge bg-light text-dark border">{s.paymentMethod}</span></td>
+                              <td><code>{s.referenceNumber || 'N/A'}</code></td>
+                              <td>{s.processedBy?.name || 'Administrator'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-5">
+                <div className="spinner-border text-primary" role="status"></div>
+                <p className="text-muted small mt-2">Loading financial analytics & settlements...</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Admin Settlement / Reconciliation Modal */}
+      {settlementModal.show && (
+        <div className="modal show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1070 }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header bg-navy-rescue text-white py-3" style={{ backgroundColor: '#0b1e36' }}>
+                <h5 className="modal-title fw-bold text-white mb-0">
+                  {settlementModal.type === 'reconcile-cash'
+                    ? 'Reconcile 10% Cash Commission'
+                    : 'Disburse Online Payout to Mechanic'}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setSettlementModal({ ...settlementModal, show: false })}
+                ></button>
+              </div>
+
+              <form onSubmit={handleSettlementSubmit}>
+                <div className="modal-body p-4">
+                  <div className="card bg-light border-0 p-3 mb-3 rounded-3">
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted small">Mechanic Partner:</span>
+                      <strong>{settlementModal.mechanic?.shopName} ({settlementModal.mechanic?.name})</strong>
+                    </div>
+                    <div className="d-flex justify-content-between mb-1">
+                      <span className="text-muted small">Bookings in Batch:</span>
+                      <span>{settlementModal.bookingIds.length} bookings</span>
+                    </div>
+                    <hr className="my-2" />
+                    <div className="d-flex justify-content-between align-items-center">
+                      <span className="fw-bold text-dark">Total Settlement Amount:</span>
+                      <span className={`fs-4 fw-bold ${settlementModal.type === 'reconcile-cash' ? 'text-danger' : 'text-success'}`}>
+                        ₹{settlementModal.amount}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="form-label fw-bold small">Payment / Transfer Method *</label>
+                    <select
+                      className="form-select"
+                      value={settlementModal.paymentMethod}
+                      onChange={(e) => setSettlementModal({ ...settlementModal, paymentMethod: e.target.value })}
+                      required
+                    >
+                      <option value="UPI">UPI (Google Pay / PhonePe / Paytm)</option>
+                      <option value="Bank_Transfer">NEFT / IMPS / RTGS Bank Transfer</option>
+                      <option value="Cash_Reconciled">Cash Collected in Hand</option>
+                      <option value="Direct_Offset">Direct Offset / Adjustment</option>
+                    </select>
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="form-label fw-bold small">Transaction Reference / UTR Number *</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={settlementModal.referenceNumber}
+                      onChange={(e) => setSettlementModal({ ...settlementModal, referenceNumber: e.target.value })}
+                      placeholder="e.g. UTR123456789 or REC-2026-001"
+                      required
+                    />
+                  </div>
+
+                  <div className="mb-3">
+                    <label className="form-label fw-bold small">Notes / Audit Remarks</label>
+                    <textarea
+                      className="form-control"
+                      rows="2"
+                      value={settlementModal.notes}
+                      onChange={(e) => setSettlementModal({ ...settlementModal, notes: e.target.value })}
+                      placeholder="Optional settlement remarks..."
+                    ></textarea>
+                  </div>
+                </div>
+
+                <div className="modal-footer bg-light">
+                  <button
+                    type="button"
+                    className="btn btn-secondary rounded-pill px-4"
+                    onClick={() => setSettlementModal({ ...settlementModal, show: false })}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className={`btn rounded-pill px-4 fw-bold ${
+                      settlementModal.type === 'reconcile-cash' ? 'btn-danger' : 'btn-success'
+                    }`}
+                  >
+                    Confirm Settlement (₹{settlementModal.amount})
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Service Modal */}
       {serviceModal.show && (

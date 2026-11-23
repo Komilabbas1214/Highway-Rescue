@@ -93,33 +93,69 @@ const createBooking = async (req, res, next) => {
       .populate('customer', 'name phone email vehicleType vehicleNumber')
       .populate('mechanic', 'name shopName phone rating location');
 
-    // Calculate distance for socket payload if mechanic assigned
-    let distanceKm = null;
-    if (targetMechanic && targetMechanic.location) {
-      distanceKm = calculateDistance(
+    // Find eligible online mechanics
+    let matchingMechanics = [];
+    if (targetMechanic) {
+      if (targetMechanic.isOnline && targetMechanic.isActive && targetMechanic.isVerified) {
+        matchingMechanics = [targetMechanic];
+      }
+    } else {
+      const allOnlineMechanics = await Mechanic.find({
+        isOnline: true,
+        isActive: true,
+        isVerified: true,
+      });
+
+      matchingMechanics = allOnlineMechanics.filter((m) => {
+        if (!m.location || !m.location.coordinates) return false;
+        const mechLng = m.location.coordinates[0];
+        const mechLat = m.location.coordinates[1];
+        const dist = calculateDistance(lat, lng, mechLat, mechLng);
+        const radius = m.serviceRadius || 25;
+        const isWithinRange = dist <= radius;
+        const offersService =
+          booking.isEmergency ||
+          !m.services ||
+          m.services.length === 0 ||
+          m.services.includes(serviceType);
+        return isWithinRange && offersService;
+      });
+    }
+
+    // Send privacy-safe dispatch notifications with ringing prompt to eligible online mechanics
+    matchingMechanics.forEach((m) => {
+      const dist = calculateDistance(
         lat,
         lng,
-        targetMechanic.location.coordinates[1],
-        targetMechanic.location.coordinates[0]
+        m.location.coordinates[1],
+        m.location.coordinates[0]
       );
-    }
 
-    const socketPayload = {
+      const offerPayload = {
+        bookingId: booking._id.toString(),
+        bookingNumber: booking.bookingId,
+        serviceType: booking.serviceType,
+        vehicleType: booking.vehicleType,
+        problemDescription: booking.problemDescription,
+        problemImage: booking.problemImage,
+        isEmergency: booking.isEmergency,
+        estimatedCost: booking.estimatedCost,
+        approximateLocation: booking.customerLocation.address || 'Near SG Highway, Ahmedabad',
+        distanceKm: Math.round(dist * 10) / 10,
+        expiresAt: new Date(Date.now() + 60 * 1000),
+        timeoutSeconds: 60,
+        message: booking.isEmergency
+          ? `EMERGENCY ALERT: Priority breakdown assistance requested nearby (~${Math.round(dist * 10) / 10} km)!`
+          : `New Roadside Service Request: ${serviceType} (~${Math.round(dist * 10) / 10} km away)`,
+      };
+
+      notifyMechanic(m._id.toString(), 'newBookingRequest', offerPayload);
+    });
+
+    notifyAdmin('adminNewBooking', {
       booking: populatedBooking,
-      distanceKm,
       isEmergency: booking.isEmergency,
-      message: booking.isEmergency
-        ? `EMERGENCY ALERT: Priority breakdown assistance requested nearby!`
-        : `New Roadside Service Request: ${serviceType}`,
-    };
-
-    // Real-time Notification via Socket.IO
-    if (targetMechanic) {
-      notifyMechanic(targetMechanic._id.toString(), 'newBookingRequest', socketPayload);
-    } else {
-      broadcastToMechanics('newBookingRequest', socketPayload);
-    }
-    notifyAdmin('adminNewBooking', socketPayload);
+    });
 
     res.status(201).json({
       success: true,
@@ -274,6 +310,13 @@ const acceptBooking = async (req, res, next) => {
       booking: populatedBooking,
       message: `${mechanic.name} has accepted your request! Help is on the way.`,
     });
+    // Broadcast to other mechanics that this offer is now taken to stop ringing and dismiss modal
+    broadcastToMechanics('bookingTaken', {
+      bookingId: updatedBooking._id.toString(),
+      bookingNumber: updatedBooking.bookingId,
+      acceptedBy: mechanic.name,
+      message: `Booking #${updatedBooking.bookingId} was accepted by another mechanic.`,
+    });
     notifyBookingRoom(updatedBooking._id.toString(), 'bookingStatusUpdated', populatedBooking);
     notifyAdmin('adminBookingUpdated', populatedBooking);
 
@@ -365,14 +408,25 @@ const updateBookingStatus = async (req, res, next) => {
     if (status === 'Completed') {
       const charge = finalCost ? Number(finalCost) : (booking.estimatedCost || 400);
       booking.finalCost = charge;
-      booking.paymentStatus = 'Pending'; // pending customer payment or cash handoff
 
-      // Update mechanic stats
-      mechanic.totalJobsCompleted += 1;
-      mechanic.totalEarnings += charge;
+      // Calculate 10% platform commission & 90% mechanic earning using final service amount
+      const commissionRate = booking.commissionRate || 0.10;
+      const platformCommission = Math.round(charge * commissionRate * 100) / 100;
+      const mechanicEarning = Math.round((charge - platformCommission) * 100) / 100;
+
+      booking.commissionRate = commissionRate;
+      booking.platformCommission = platformCommission;
+      booking.mechanicEarning = mechanicEarning;
+      booking.commissionPaise = Math.round(platformCommission * 100);
+      booking.mechanicEarningPaise = Math.round(mechanicEarning * 100);
+      booking.settlementStatus = 'Pending';
+
+      // Update mechanic stats with net 90% earnings
+      mechanic.totalJobsCompleted = (mechanic.totalJobsCompleted || 0) + 1;
+      mechanic.totalEarnings = (mechanic.totalEarnings || 0) + mechanicEarning;
       await mechanic.save();
 
-      // Create Payment record
+      // Create Payment record with complete commission snapshot
       await Payment.create({
         booking: booking._id,
         customer: booking.customer,
@@ -380,6 +434,12 @@ const updateBookingStatus = async (req, res, next) => {
         amount: charge,
         paymentMethod: booking.paymentMethod || 'Cash',
         status: 'Created',
+        commissionRate,
+        commissionAmount: platformCommission,
+        mechanicPayout: mechanicEarning,
+        commissionAmountPaise: Math.round(platformCommission * 100),
+        mechanicPayoutPaise: Math.round(mechanicEarning * 100),
+        settlementStatus: 'Pending',
       });
     }
 
@@ -460,6 +520,10 @@ const cancelBooking = async (req, res, next) => {
             status: 'Cancelled',
             cancellationReason,
             cancelledBy: 'customer',
+            platformCommission: 0,
+            mechanicEarning: 0,
+            commissionPaise: 0,
+            mechanicEarningPaise: 0,
           },
           $push: {
             statusTimeline: {

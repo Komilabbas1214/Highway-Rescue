@@ -383,6 +383,111 @@ const getMechanicDashboardStats = async (req, res, next) => {
   }
 };
 
+// @desc    Get mechanic earnings breakdown & commission settlements
+// @route   GET /api/mechanics/earnings
+// @access  Private (Mechanic)
+const getMechanicEarnings = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findOne({ user: req.user._id });
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found',
+      });
+    }
+
+    const bookings = await Booking.find({
+      mechanic: mechanic._id,
+      status: 'Completed',
+    })
+      .populate('customer', 'name phone email vehicleNumber')
+      .sort('-createdAt');
+
+    let totalServiceEarnings = 0;
+    let platformCommissionDeducted = 0;
+    let netMechanicEarnings = 0;
+    let cashCollected = 0;
+    let cashCommissionPayable = 0;
+    let cashCommissionSettled = 0;
+    let onlineGross = 0;
+    let onlinePaidOut = 0;
+    let onlinePayoutPending = 0;
+
+    const bookingWiseEarnings = bookings.map((b) => {
+      const gross = b.finalCost || b.estimatedCost || 400;
+      const rate = b.commissionRate || 0.10;
+      const comm = b.platformCommission > 0
+        ? b.platformCommission
+        : Math.round(gross * rate * 100) / 100;
+      const net = b.mechanicEarning > 0
+        ? b.mechanicEarning
+        : Math.round((gross - comm) * 100) / 100;
+
+      totalServiceEarnings += gross;
+      platformCommissionDeducted += comm;
+      netMechanicEarnings += net;
+
+      if (b.paymentMethod === 'Cash') {
+        cashCollected += gross;
+        if (b.settlementStatus === 'Settled') {
+          cashCommissionSettled += comm;
+        } else {
+          cashCommissionPayable += comm;
+        }
+      } else {
+        onlineGross += gross;
+        if (b.settlementStatus === 'Settled') {
+          onlinePaidOut += net;
+        } else {
+          onlinePayoutPending += net;
+        }
+      }
+
+      return {
+        bookingId: b._id,
+        bookingNumber: b.bookingId,
+        serviceType: b.serviceType,
+        vehicleNumber: b.vehicleNumber,
+        customerName: b.customer?.name || 'Customer',
+        date: b.createdAt,
+        finalCost: gross,
+        commissionRate: rate,
+        platformCommission: comm,
+        netEarning: net,
+        paymentMethod: b.paymentMethod || 'Cash',
+        paymentStatus: b.paymentStatus || 'Pending',
+        settlementStatus: b.settlementStatus || 'Pending',
+        settlementReference: b.settlementReference || '',
+        settledAt: b.settledAt || null,
+      };
+    });
+
+    const netBalance = Math.round((onlinePayoutPending - cashCommissionPayable) * 100) / 100;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          totalCompletedJobs: bookings.length,
+          totalServiceEarnings: Math.round(totalServiceEarnings * 100) / 100,
+          platformCommissionDeducted: Math.round(platformCommissionDeducted * 100) / 100,
+          netMechanicEarnings: Math.round(netMechanicEarnings * 100) / 100,
+          cashCollected: Math.round(cashCollected * 100) / 100,
+          cashCommissionPayable: Math.round(cashCommissionPayable * 100) / 100,
+          cashCommissionSettled: Math.round(cashCommissionSettled * 100) / 100,
+          onlineGross: Math.round(onlineGross * 100) / 100,
+          onlinePaidOut: Math.round(onlinePaidOut * 100) / 100,
+          onlinePayoutPending: Math.round(onlinePayoutPending * 100) / 100,
+          netBalance,
+        },
+        bookingWiseEarnings,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   registerMechanic,
   getNearbyMechanics,
@@ -390,4 +495,5 @@ module.exports = {
   toggleAvailability,
   updateMechanicProfile,
   getMechanicDashboardStats,
+  getMechanicEarnings,
 };
