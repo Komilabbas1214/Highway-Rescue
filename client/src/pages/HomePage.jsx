@@ -124,10 +124,13 @@ const HomePage = () => {
                 </div>
 
                 <div className="p-3 rounded-3 bg-light border text-center">
-                  <span className="text-muted small d-block mb-1">Facing severe accident or life hazard?</span>
-                  <a href="tel:112" className="btn btn-danger btn-sm fw-bold w-100">
-                    <i className="bi bi-telephone-fill me-1"></i> Call 112 (National ERSS)
-                  </a>
+                  <span className="text-muted small d-block mb-1">Need immediate breakdown help?</span>
+                  <button
+                    onClick={() => handleOpenBooking({ name: 'General Vehicle Repair' })}
+                    className="btn btn-primary-rescue btn-sm fw-bold w-100"
+                  >
+                    <i className="bi bi-lightning-charge-fill me-1"></i> Request Highway Rescue Now
+                  </button>
                 </div>
               </div>
             </div>
@@ -280,12 +283,12 @@ const HomePage = () => {
 
                 <div className="d-flex gap-3 align-items-start">
                   <div className="p-2 rounded-circle bg-warning bg-opacity-10 text-warning">
-                    <i className="bi bi-shield-lock-fill fs-4"></i>
+                    <i className="bi bi-lightning-charge-fill fs-4"></i>
                   </div>
                   <div>
-                    <h6 className="fw-bold mb-1">Direct Emergency 112 / 100 Integration</h6>
+                    <h6 className="fw-bold mb-1">Priority Highway Roadside Dispatch</h6>
                     <p className="text-muted small mb-0">
-                      Immediate access to official Indian emergency services alongside private vehicle rescue.
+                      Rapid roadside assistance with GPS matching, verified technicians, and transparent pricing.
                     </p>
                   </div>
                 </div>

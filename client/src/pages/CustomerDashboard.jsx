@@ -222,13 +222,13 @@ const CustomerDashboard = () => {
           </li>
           <li className="nav-item">
             <button
-              className={`nav-link rounded-pill fw-semibold ${activeTab === 'emergency' ? 'active bg-danger text-white' : 'text-danger bg-white border border-danger'}`}
+              className={`nav-link rounded-pill fw-semibold ${activeTab === 'emergency' ? 'active bg-warning text-dark' : 'text-dark bg-white border'}`}
               onClick={() => {
                 setActiveTab('emergency');
                 setSearchParams({ tab: 'emergency' });
               }}
             >
-              <i className="bi bi-shield-exclamation me-1"></i> Emergency 112 / 100
+              <i className="bi bi-lightning-charge-fill me-1 text-warning"></i> Highway Roadside Support
             </button>
           </li>
         </ul>
@@ -703,7 +703,7 @@ const CustomerDashboard = () => {
           </div>
         )}
 
-        {/* Tab 4: Emergency Assistance */}
+        {/* Tab 4: Highway Roadside Support */}
         {activeTab === 'emergency' && (
           <div>
             <EmergencyBanner onEmergencyRequestClick={() => setShowBookingModal(true)} />
