@@ -5,8 +5,22 @@ import { toast } from 'react-toastify';
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [mechanic, setMechanic] = useState(null);
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('highway_rescue_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+  const [mechanic, setMechanic] = useState(() => {
+    try {
+      const stored = localStorage.getItem('highway_rescue_mechanic');
+      return stored ? JSON.parse(stored) : null;
+    } catch (e) {
+      return null;
+    }
+  });
   const [token, setToken] = useState(localStorage.getItem('highway_rescue_token') || null);
   const [loading, setLoading] = useState(true);
 
@@ -20,6 +34,12 @@ export const AuthProvider = ({ children }) => {
           if (res.data.success) {
             setUser(res.data.user);
             setMechanic(res.data.mechanic);
+            if (res.data.user) {
+              localStorage.setItem('highway_rescue_user', JSON.stringify(res.data.user));
+            }
+            if (res.data.mechanic) {
+              localStorage.setItem('highway_rescue_mechanic', JSON.stringify(res.data.mechanic));
+            }
           }
         } catch (error) {
           console.warn('Auto auth check failed:', error.response?.data?.message || error.message);
@@ -40,6 +60,9 @@ export const AuthProvider = ({ children }) => {
         const { token: receivedToken, user: receivedUser, mechanic: receivedMech } = res.data;
         localStorage.setItem('highway_rescue_token', receivedToken);
         localStorage.setItem('highway_rescue_user', JSON.stringify(receivedUser));
+        if (receivedMech) {
+          localStorage.setItem('highway_rescue_mechanic', JSON.stringify(receivedMech));
+        }
         setToken(receivedToken);
         setUser(receivedUser);
         setMechanic(receivedMech);
@@ -83,6 +106,9 @@ export const AuthProvider = ({ children }) => {
         const { token: receivedToken, user: receivedUser, mechanic: receivedMech } = res.data;
         localStorage.setItem('highway_rescue_token', receivedToken);
         localStorage.setItem('highway_rescue_user', JSON.stringify(receivedUser));
+        if (receivedMech) {
+          localStorage.setItem('highway_rescue_mechanic', JSON.stringify(receivedMech));
+        }
         setToken(receivedToken);
         setUser(receivedUser);
         setMechanic(receivedMech);
@@ -100,6 +126,7 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('highway_rescue_token');
     localStorage.removeItem('highway_rescue_user');
+    localStorage.removeItem('highway_rescue_mechanic');
     setToken(null);
     setUser(null);
     setMechanic(null);

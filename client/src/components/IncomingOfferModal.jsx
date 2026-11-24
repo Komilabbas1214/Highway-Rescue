@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { startRingtone, unlockAudio } from '../utils/ringtoneAudio';
 
 const IncomingOfferModal = ({ offers, onAccept, onReject, onExpire, soundEnabled, onEnableSound }) => {
   const [timeLeft, setTimeLeft] = useState(60);
@@ -7,6 +8,9 @@ const IncomingOfferModal = ({ offers, onAccept, onReject, onExpire, soundEnabled
 
   useEffect(() => {
     if (!currentOffer) return;
+
+    // Ensure audio ringtone is ringing
+    startRingtone();
 
     // Reset countdown for each new top offer
     const totalDuration = currentOffer.timeoutSeconds || 60;

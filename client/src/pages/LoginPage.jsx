@@ -31,11 +31,6 @@ const LoginPage = () => {
     }
   };
 
-  const handleFillDemo = (demoEmail, demoPass) => {
-    setEmail(demoEmail);
-    setPassword(demoPass);
-  };
-
   return (
     <div className="py-5" style={{ minHeight: '85vh', backgroundColor: '#f8fafc' }}>
       <div className="container">
@@ -50,39 +45,6 @@ const LoginPage = () => {
                 <p className="text-muted small">
                   Sign in to your Highway Rescue account to manage bookings or garage dispatches.
                 </p>
-              </div>
-
-              {/* Demo Credentials Helper Box */}
-              <div className="p-3 rounded-3 bg-light border mb-4">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <small className="fw-bold text-muted text-uppercase">One-Click Demo Accounts:</small>
-                </div>
-                <div className="d-flex flex-wrap gap-1">
-                  <button
-                    type="button"
-                    className="btn btn-outline-primary btn-sm flex-fill"
-                    style={{ fontSize: '0.74rem' }}
-                    onClick={() => handleFillDemo('rahul.sharma@example.com', 'Customer@123')}
-                  >
-                    🚗 Customer Demo
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-outline-warning text-dark btn-sm flex-fill"
-                    style={{ fontSize: '0.74rem' }}
-                    onClick={() => handleFillDemo('patel.auto@example.com', 'Mechanic@123')}
-                  >
-                    🔧 Mechanic Demo
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-outline-danger btn-sm flex-fill"
-                    style={{ fontSize: '0.74rem' }}
-                    onClick={() => handleFillDemo('admin@highwayrescue.in', 'Admin@123')}
-                  >
-                    🛡️ Admin Demo
-                  </button>
-                </div>
               </div>
 
               <form onSubmit={handleSubmit}>

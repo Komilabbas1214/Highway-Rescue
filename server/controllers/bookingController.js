@@ -18,6 +18,47 @@ const generateBookingId = () => {
   return `${prefix}-${randomNum}`;
 };
 
+// Flexible service compatibility checker for mechanic dispatch
+const isServiceMatch = (mechanicServices, requestedService, isEmergency) => {
+  if (isEmergency) return true;
+  if (!mechanicServices || mechanicServices.length === 0) return true;
+  if (!requestedService) return true;
+
+  const reqLower = requestedService.toLowerCase();
+
+  // If mechanic offers General Mechanic / General Vehicle Repair / All / Car Mechanic / Bike Mechanic
+  const isGeneral = mechanicServices.some((s) => {
+    const sl = s.toLowerCase();
+    return (
+      sl.includes('general') ||
+      sl.includes('all') ||
+      sl.includes('car mechanic') ||
+      sl.includes('bike mechanic') ||
+      sl.includes('mechanic')
+    );
+  });
+  if (isGeneral) return true;
+
+  return mechanicServices.some((s) => {
+    const sl = s.toLowerCase();
+    if (sl === reqLower || reqLower.includes(sl) || sl.includes(reqLower)) return true;
+
+    // Common breakdown service keywords
+    const keywords = [
+      'puncture', 'tyre', 'tire', 'wheel',
+      'battery', 'jump', 'electrical',
+      'engine', 'motor', 'radiator',
+      'towing', 'tow', 'crane', 'flatbed',
+      'fuel', 'petrol', 'diesel',
+      'brake', 'clutch', 'oil'
+    ];
+    for (const kw of keywords) {
+      if (sl.includes(kw) && reqLower.includes(kw)) return true;
+    }
+    return false;
+  });
+};
+
 // @desc    Create a new roadside assistance booking request
 // @route   POST /api/bookings
 // @access  Private (Customer)
@@ -121,11 +162,7 @@ const createBooking = async (req, res, next) => {
         const dist = calculateDistance(lat, lng, mechLat, mechLng);
         const radius = m.serviceRadius || 25;
         const isWithinRange = dist <= radius;
-        const offersService =
-          booking.isEmergency ||
-          !m.services ||
-          m.services.length === 0 ||
-          m.services.includes(serviceType);
+        const offersService = isServiceMatch(m.services, serviceType, booking.isEmergency);
         return isWithinRange && offersService;
       });
     }
@@ -157,8 +194,35 @@ const createBooking = async (req, res, next) => {
           : `New Roadside Service Request: ${serviceType} (~${Math.round(dist * 10) / 10} km away)`,
       };
 
+      // Notify mechanic private room
       notifyMechanic(m._id.toString(), 'newBookingRequest', offerPayload);
+
+      // Also notify mechanic user room if user ID is attached
+      if (m.user) {
+        const userIdStr = m.user._id ? m.user._id.toString() : m.user.toString();
+        notifyCustomer(userIdStr, 'newBookingRequest', offerPayload);
+      }
     });
+
+    // Also broadcast to active mechanics room for immediate delivery
+    if (matchingMechanics.length > 0) {
+      broadcastToMechanics('newBookingRequest', {
+        bookingId: booking._id.toString(),
+        bookingNumber: booking.bookingId,
+        serviceType: booking.serviceType,
+        vehicleType: booking.vehicleType,
+        problemDescription: booking.problemDescription,
+        problemImage: booking.problemImage,
+        isEmergency: booking.isEmergency,
+        estimatedCost: booking.estimatedCost,
+        approximateLocation: booking.customerLocation.address || 'Near SG Highway, Ahmedabad',
+        expiresAt: new Date(Date.now() + 60 * 1000),
+        timeoutSeconds: 60,
+        message: booking.isEmergency
+          ? `EMERGENCY ALERT: Priority breakdown assistance requested nearby!`
+          : `New Roadside Service Request: ${serviceType}`,
+      });
+    }
 
     notifyAdmin('adminNewBooking', {
       booking: populatedBooking,

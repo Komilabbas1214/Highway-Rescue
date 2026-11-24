@@ -23,14 +23,22 @@ io = new Server(server, {
         socket.join(`user_${userId}`);
         console.log(`[Socket.io] User ${userId} joined room user_${userId}`);
       }
-      if (mechanicId) {
-        socket.join(`mechanic_${mechanicId}`);
-        console.log(`[Socket.io] Mechanic ${mechanicId} joined private room mechanic_${mechanicId}`);
 
-        // Only join active broadcast room if mechanic is approved, verified, active, not demo, and online
-        try {
-          const Mechanic = require('../models/Mechanic');
-          const mech = await Mechanic.findById(mechanicId).select('approvalStatus isVerified isActive isOnline isDemo');
+      // If user is a mechanic, ensure they join their mechanic private room and active_mechanics room
+      try {
+        const Mechanic = require('../models/Mechanic');
+        let mech = null;
+        if (mechanicId) {
+          mech = await Mechanic.findById(mechanicId).select('approvalStatus isVerified isActive isOnline isDemo');
+        } else if (userId && (role === 'mechanic' || !role)) {
+          mech = await Mechanic.findOne({ user: userId }).select('approvalStatus isVerified isActive isOnline isDemo');
+          if (mech) mechanicId = mech._id.toString();
+        }
+
+        if (mechanicId) {
+          socket.join(`mechanic_${mechanicId}`);
+          console.log(`[Socket.io] Mechanic ${mechanicId} joined private room mechanic_${mechanicId}`);
+
           if (
             mech &&
             mech.approvalStatus === 'Approved' &&
@@ -42,10 +50,11 @@ io = new Server(server, {
             socket.join('active_mechanics');
             console.log(`[Socket.io] Mechanic ${mechanicId} joined active_mechanics`);
           }
-        } catch (err) {
-          console.warn('[Socket.io] Status check error for mechanic join:', err.message);
         }
+      } catch (err) {
+        console.warn('[Socket.io] Status check error for mechanic join:', err.message);
       }
+
       if (role === 'admin') {
         socket.join('admin_room');
         console.log(`[Socket.io] Admin joined admin_room`);

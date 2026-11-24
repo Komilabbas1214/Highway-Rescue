@@ -95,10 +95,11 @@ const MechanicDashboard = () => {
 
     // 1. Incoming Booking Offer (Eligible Online Mechanics Only)
     socket.on('newBookingRequest', (payload) => {
+      console.log('[Socket] Incoming booking offer received:', payload);
       fetchMechanicData();
 
-      // Only queue offer and ring if mechanic is online and verified
-      if (stats.isOnline && stats.isVerified && payload?.bookingId) {
+      // Immediately queue offer and ring alert
+      if (payload?.bookingId) {
         setActiveOffers((prev) => {
           if (prev.some((o) => o.bookingId === payload.bookingId)) return prev;
           return [...prev, payload];
@@ -374,6 +375,23 @@ const MechanicDashboard = () => {
                     <i className="bi bi-volume-mute-fill me-1"></i> Sound Muted (Click to Enable)
                   </span>
                 )}
+                <button
+                  type="button"
+                  className="btn btn-outline-warning btn-sm py-0 px-2 fw-semibold"
+                  style={{ fontSize: '0.75rem' }}
+                  onClick={async () => {
+                    await unlockAudio();
+                    setSoundEnabled(true);
+                    startRingtone();
+                    setTimeout(() => {
+                      stopRingtone();
+                    }, 3000);
+                    toast.info('🔊 Playing 3-second test dispatch sound alert...');
+                  }}
+                  title="Test emergency alert ringtone on speakers"
+                >
+                  <i className="bi bi-play-circle-fill me-1"></i> Test Ringtone
+                </button>
               </div>
               <h3 className="fw-bold text-white mb-0">{mechanic?.shopName || 'Mechanic Garage'}</h3>
               <small className="text-white-50">
