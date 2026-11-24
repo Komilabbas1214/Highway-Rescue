@@ -18,15 +18,33 @@ io = new Server(server, {
     console.log(`[Socket.io] Client connected: ${socket.id}`);
 
     // Join room based on user role and ID
-    socket.on('join', ({ userId, role, mechanicId }) => {
+    socket.on('join', async ({ userId, role, mechanicId }) => {
       if (userId) {
         socket.join(`user_${userId}`);
         console.log(`[Socket.io] User ${userId} joined room user_${userId}`);
       }
       if (mechanicId) {
         socket.join(`mechanic_${mechanicId}`);
-        socket.join('active_mechanics');
-        console.log(`[Socket.io] Mechanic ${mechanicId} joined mechanic_${mechanicId}`);
+        console.log(`[Socket.io] Mechanic ${mechanicId} joined private room mechanic_${mechanicId}`);
+
+        // Only join active broadcast room if mechanic is approved, verified, active, not demo, and online
+        try {
+          const Mechanic = require('../models/Mechanic');
+          const mech = await Mechanic.findById(mechanicId).select('approvalStatus isVerified isActive isOnline isDemo');
+          if (
+            mech &&
+            mech.approvalStatus === 'Approved' &&
+            mech.isVerified &&
+            mech.isActive &&
+            mech.isOnline &&
+            !mech.isDemo
+          ) {
+            socket.join('active_mechanics');
+            console.log(`[Socket.io] Mechanic ${mechanicId} joined active_mechanics`);
+          }
+        } catch (err) {
+          console.warn('[Socket.io] Status check error for mechanic join:', err.message);
+        }
       }
       if (role === 'admin') {
         socket.join('admin_room');

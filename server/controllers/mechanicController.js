@@ -23,6 +23,8 @@ const registerMechanic = async (req, res, next) => {
       email,
       phone,
       password,
+      confirmPassword,
+      serviceCategory,
       shopName,
       services,
       experience,
@@ -33,24 +35,68 @@ const registerMechanic = async (req, res, next) => {
       latitude,
       longitude,
       serviceRadius,
+      serviceArea,
     } = req.body;
 
-    if (!name || !email || !phone || !password || !shopName || !shopAddress) {
+    // Validate required fields
+    if (!name || !email || !phone || !password || !shopAddress) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide all required fields including name, email, phone, shop name, and address.',
+        message: 'Please provide all required fields: full name, email, mobile number, password, and shop address.',
       });
     }
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
+    // Check password confirmation if provided
+    if (confirmPassword && password !== confirmPassword) {
       return res.status(400).json({
         success: false,
-        message: 'An account with this email already exists.',
+        message: 'Passwords do not match. Please re-enter your password.',
       });
     }
 
-    // Default to Ahmedabad coordinates if not provided (23.0225, 72.5714)
+    if (password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long.',
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedPhone = phone.trim();
+
+    // Check duplicate email across User and Mechanic
+    const existingUserEmail = await User.findOne({ email: normalizedEmail });
+    if (existingUserEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email address already exists. Please log in.',
+      });
+    }
+    const existingMechEmail = await Mechanic.findOne({ email: normalizedEmail });
+    if (existingMechEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'A mechanic with this email address already exists.',
+      });
+    }
+
+    // Check duplicate phone across User and Mechanic
+    const existingUserPhone = await User.findOne({ phone: normalizedPhone });
+    if (existingUserPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this mobile number already exists.',
+      });
+    }
+    const existingMechPhone = await Mechanic.findOne({ phone: normalizedPhone });
+    if (existingMechPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'A mechanic with this mobile number already exists.',
+      });
+    }
+
+    // Default to Ahmedabad coordinates if not provided (23.0338, 72.5186)
     const lat = latitude ? parseFloat(latitude) : 23.0338;
     const lng = longitude ? parseFloat(longitude) : 72.5186;
 
@@ -70,6 +116,10 @@ const registerMechanic = async (req, res, next) => {
       parsedServices = ['Puncture Repair', 'General Mechanic'];
     }
 
+    // Validate service category
+    const validCategories = ['Bike', 'Car', 'Both'];
+    const finalServiceCategory = validCategories.includes(serviceCategory) ? serviceCategory : 'Both';
+
     // Handle uploaded files
     let profileImageUrl = '';
     let idDocumentUrl = '';
@@ -85,23 +135,29 @@ const registerMechanic = async (req, res, next) => {
 
     // Create User record
     const user = await User.create({
-      name,
-      email: email.toLowerCase(),
-      phone,
+      name: name.trim(),
+      email: normalizedEmail,
+      phone: normalizedPhone,
       password,
       role: 'mechanic',
     });
 
-    // Create Mechanic profile
+    const finalShopName = shopName && shopName.trim()
+      ? shopName.trim()
+      : `${name.trim()}'s Auto Care`;
+
+    // Create Mechanic profile - strictly initialized as Pending and unverified
     const mechanic = await Mechanic.create({
       user: user._id,
-      name,
-      phone,
-      email: email.toLowerCase(),
-      shopName,
+      name: name.trim(),
+      phone: normalizedPhone,
+      email: normalizedEmail,
+      shopName: finalShopName,
+      serviceCategory: finalServiceCategory,
+      serviceArea: serviceArea && serviceArea.trim() ? serviceArea.trim() : 'Ahmedabad',
       services: parsedServices,
       experience: experience ? Number(experience) : 2,
-      shopAddress,
+      shopAddress: shopAddress.trim(),
       city: city || 'Ahmedabad',
       state: state || 'Gujarat',
       pincode: pincode || '380015',
@@ -112,16 +168,18 @@ const registerMechanic = async (req, res, next) => {
       serviceRadius: serviceRadius ? Number(serviceRadius) : 25,
       profileImage: profileImageUrl,
       idDocument: idDocumentUrl,
-      isVerified: false, // Must be verified by admin
-      isOnline: true,
+      approvalStatus: 'Pending', // Enforce Pending status on registration
+      isVerified: false,         // Must be approved and verified by admin
+      isOnline: false,           // Cannot go online until approved
       isActive: true,
+      isDemo: false,
     });
 
     const token = generateToken(user._id);
 
     res.status(201).json({
       success: true,
-      message: 'Mechanic registration submitted successfully! Your account will be verified by the admin shortly.',
+      message: 'Mechanic registration submitted successfully! Your account is under verification and will be reviewed by admin.',
       token,
       user: {
         _id: user._id,
@@ -142,27 +200,35 @@ const registerMechanic = async (req, res, next) => {
 // @access  Public
 const getNearbyMechanics = async (req, res, next) => {
   try {
-    const { lat, lng, radius, serviceCategory, verifiedOnly } = req.query;
+    const { lat, lng, radius, serviceCategory, verifiedOnly, onlineOnly } = req.query;
 
     // Default coordinates: Ahmedabad (SG Highway / ISCON)
     const userLat = lat ? parseFloat(lat) : 23.0338;
     const userLng = lng ? parseFloat(lng) : 72.5186;
     const searchRadiusKm = radius ? parseFloat(radius) : 25; // in kilometers
 
+    // Strictly enforce: only approved, verified, active, non-demo mechanics
     const query = {
+      approvalStatus: 'Approved',
+      isVerified: true,
       isActive: true,
-      isOnline: true,
+      isDemo: { $ne: true },
     };
 
-    if (verifiedOnly === 'true') {
-      query.isVerified = true;
+    // By default, filter for online mechanics unless explicitly asked for directory
+    if (onlineOnly !== 'false') {
+      query.isOnline = true;
     }
 
     if (serviceCategory && serviceCategory !== 'All') {
-      query.services = { $regex: new RegExp(serviceCategory, 'i') };
+      query.$or = [
+        { serviceCategory: serviceCategory },
+        { serviceCategory: 'Both' },
+        { services: { $regex: new RegExp(serviceCategory, 'i') } },
+      ];
     }
 
-    // Use MongoDB GeoJSON $geoNear or $nearSphere
+    // Use MongoDB GeoJSON $geoNear or $nearSphere, excluding sensitive idDocument
     let mechanics = [];
     try {
       mechanics = await Mechanic.find({
@@ -176,17 +242,21 @@ const getNearbyMechanics = async (req, res, next) => {
             $maxDistance: searchRadiusKm * 1000, // meters
           },
         },
-      }).populate('user', 'name phone email');
+      })
+        .select('-idDocument')
+        .populate('user', 'name phone email');
     } catch (geoErr) {
       // Fallback if 2dsphere index is warming up
       console.warn('[Mechanic Finder] Fallback search without geoNear:', geoErr.message);
-      mechanics = await Mechanic.find(query).populate('user', 'name phone email');
+      mechanics = await Mechanic.find(query)
+        .select('-idDocument')
+        .populate('user', 'name phone email');
     }
 
     // Map distance in km for every mechanic
     const result = mechanics.map((m) => {
-      const mechLng = m.location.coordinates[0];
-      const mechLat = m.location.coordinates[1];
+      const mechLng = m.location?.coordinates?.[0] || userLng;
+      const mechLat = m.location?.coordinates?.[1] || userLat;
       const dist = calculateDistance(userLat, userLng, mechLat, mechLng);
       return {
         ...m.toObject(),
@@ -221,6 +291,24 @@ const getMechanicById = async (req, res, next) => {
       });
     }
 
+    // Check if caller is admin or mechanic profile owner
+    const isSelfOrAdmin =
+      req.user &&
+      (req.user.role === 'admin' ||
+        (mechanic.user && req.user._id.toString() === mechanic.user._id.toString()));
+
+    if (!isSelfOrAdmin) {
+      // Public caller can only view approved, active, non-demo mechanics
+      if (mechanic.approvalStatus !== 'Approved' || !mechanic.isActive || mechanic.isDemo) {
+        return res.status(404).json({
+          success: false,
+          message: 'Mechanic profile not found or unavailable',
+        });
+      }
+      // Never expose sensitive identity documents to public callers
+      mechanic.idDocument = undefined;
+    }
+
     const reviews = await Review.find({ mechanic: mechanic._id, isReported: false })
       .populate('customer', 'name')
       .sort('-createdAt')
@@ -249,13 +337,35 @@ const toggleAvailability = async (req, res, next) => {
       });
     }
 
-    mechanic.isOnline = req.body.isOnline !== undefined ? req.body.isOnline : !mechanic.isOnline;
+    const requestedOnline = req.body.isOnline !== undefined ? Boolean(req.body.isOnline) : !mechanic.isOnline;
+    const isApproved = mechanic.approvalStatus === 'Approved' && mechanic.isVerified && mechanic.isActive;
+
+    // Disallow unapproved, pending, rejected, or suspended mechanics from going online
+    if (requestedOnline && !isApproved) {
+      let message = 'You cannot go online until your account is approved and verified by an administrator.';
+      if (mechanic.approvalStatus === 'Pending') {
+        message = 'Your account is under verification. You will be able to go online once approved by admin.';
+      } else if (mechanic.approvalStatus === 'Rejected') {
+        message = `Your application was rejected: ${mechanic.rejectionReason || 'Please contact support.'}`;
+      } else if (mechanic.approvalStatus === 'Suspended') {
+        message = `Your account has been suspended: ${mechanic.suspensionReason || 'Please contact support.'}`;
+      }
+      return res.status(403).json({
+        success: false,
+        message,
+        approvalStatus: mechanic.approvalStatus,
+        isVerified: mechanic.isVerified,
+      });
+    }
+
+    mechanic.isOnline = requestedOnline;
     await mechanic.save();
 
     res.status(200).json({
       success: true,
       message: `Status updated: You are now ${mechanic.isOnline ? 'ONLINE and accepting requests' : 'OFFLINE'}`,
       isOnline: mechanic.isOnline,
+      approvalStatus: mechanic.approvalStatus,
       mechanic,
     });
   } catch (error) {
@@ -374,6 +484,9 @@ const getMechanicDashboardStats = async (req, res, next) => {
         totalEarnings: mechanic.totalEarnings || 0,
         isOnline: mechanic.isOnline,
         isVerified: mechanic.isVerified,
+        approvalStatus: mechanic.approvalStatus || (mechanic.isVerified ? 'Approved' : 'Pending'),
+        rejectionReason: mechanic.rejectionReason || '',
+        suspensionReason: mechanic.suspensionReason || '',
         rating: mechanic.rating,
         totalReviews: mechanic.totalReviews,
       },

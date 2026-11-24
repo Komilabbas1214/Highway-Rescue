@@ -17,8 +17,20 @@ const AdminDashboard = () => {
 
   // Search & Filter States
   const [bookingStatusFilter, setBookingStatusFilter] = useState('All');
-  const [mechanicFilter, setMechanicFilter] = useState('');
+  const [mechanicFilter, setMechanicFilter] = useState('All');
   const [userSearch, setUserSearch] = useState('');
+
+  // Mechanic Lifecycle Modals
+  const [mechanicDetailModal, setMechanicDetailModal] = useState({
+    show: false,
+    mechanic: null,
+  });
+  const [actionModal, setActionModal] = useState({
+    show: false,
+    type: 'reject', // 'reject' or 'suspend'
+    mechanic: null,
+    reason: '',
+  });
 
   // Service Create/Edit Modal state
   const [serviceModal, setServiceModal] = useState({
@@ -79,9 +91,13 @@ const AdminDashboard = () => {
   };
 
   // Load Mechanics
-  const fetchMechanics = async () => {
+  const fetchMechanics = async (filter = mechanicFilter) => {
     try {
-      const res = await api.get('/admin/mechanics', { params: { verified: mechanicFilter } });
+      const params = {};
+      if (filter && filter !== 'All') {
+        params.approvalStatus = filter;
+      }
+      const res = await api.get('/admin/mechanics', { params });
       if (res.data.success) setMechanics(res.data.data);
     } catch (err) {
       console.warn(err);
@@ -203,7 +219,76 @@ const AdminDashboard = () => {
     }
   };
 
-  // Verify/Reject Mechanic
+  // Approve Mechanic
+  const handleApproveMechanic = async (mechanicId) => {
+    try {
+      const res = await api.put(`/admin/mechanics/${mechanicId}/approve`);
+      if (res.data.success) {
+        toast.success(res.data.message);
+        fetchMechanics();
+        fetchDashboard();
+        if (mechanicDetailModal.show) {
+          setMechanicDetailModal((prev) => ({ ...prev, show: false }));
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to approve mechanic');
+    }
+  };
+
+  // Open Reject / Suspend Modal
+  const handleOpenActionModal = (type, mech) => {
+    setActionModal({
+      show: true,
+      type,
+      mechanic: mech,
+      reason: '',
+    });
+  };
+
+  // Submit Reject / Suspend
+  const handleActionSubmit = async (e) => {
+    e.preventDefault();
+    if (!actionModal.mechanic) return;
+    try {
+      const endpoint =
+        actionModal.type === 'reject'
+          ? `/admin/mechanics/${actionModal.mechanic._id}/reject`
+          : `/admin/mechanics/${actionModal.mechanic._id}/suspend`;
+
+      const res = await api.put(endpoint, { reason: actionModal.reason });
+      if (res.data.success) {
+        toast.success(res.data.message);
+        setActionModal({ show: false, type: 'reject', mechanic: null, reason: '' });
+        fetchMechanics();
+        fetchDashboard();
+        if (mechanicDetailModal.show) {
+          setMechanicDetailModal((prev) => ({ ...prev, show: false }));
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || `Failed to ${actionModal.type} mechanic`);
+    }
+  };
+
+  // Reactivate Mechanic
+  const handleReactivateMechanic = async (mechanicId) => {
+    try {
+      const res = await api.put(`/admin/mechanics/${mechanicId}/reactivate`);
+      if (res.data.success) {
+        toast.success(res.data.message);
+        fetchMechanics();
+        fetchDashboard();
+        if (mechanicDetailModal.show) {
+          setMechanicDetailModal((prev) => ({ ...prev, show: false }));
+        }
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to reactivate mechanic');
+    }
+  };
+
+  // Verify/Reject Mechanic (legacy support)
   const handleVerifyMechanic = async (mechanicId, isVerified) => {
     try {
       const res = await api.put(`/admin/mechanics/${mechanicId}/verify`, { isVerified });
@@ -500,88 +585,164 @@ const AdminDashboard = () => {
         {activeTab === 'mechanics' && (
           <div className="card rescue-card p-4 border-0 shadow-sm bg-white">
             <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
-              <h5 className="fw-bold text-navy mb-0">Mechanic & Garage Partners ({mechanics.length})</h5>
-              <div className="d-flex gap-2">
-                <select
-                  className="form-select form-select-sm"
-                  value={mechanicFilter}
-                  onChange={(e) => setMechanicFilter(e.target.value)}
-                  style={{ width: '180px' }}
-                >
-                  <option value="">All Verification Status</option>
-                  <option value="true">Verified Only</option>
-                  <option value="false">Pending Approval</option>
-                </select>
+              <div>
+                <h5 className="fw-bold text-navy mb-1">Ahmedabad Mechanic & Garage Partners ({mechanics.length})</h5>
+                <small className="text-muted">Review, verify, approve or suspend roadside assistance service providers</small>
+              </div>
+              <div className="d-flex flex-wrap gap-2">
+                <div className="btn-group btn-group-sm">
+                  {['All', 'Pending', 'Approved', 'Rejected', 'Suspended'].map((status) => (
+                    <button
+                      key={status}
+                      className={`btn ${mechanicFilter === status ? 'btn-primary-rescue' : 'btn-outline-secondary'}`}
+                      onClick={() => {
+                        setMechanicFilter(status);
+                        fetchMechanics(status);
+                      }}
+                    >
+                      {status === 'Pending' ? 'Pending Review' : status}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
             <div className="table-responsive">
-              <table className="table table-hover align-middle">
+              <table className="table table-hover align-middle small">
                 <thead className="table-light">
                   <tr>
-                    <th>Garage Name</th>
-                    <th>Technician</th>
-                    <th>Phone / Email</th>
-                    <th>City / Address</th>
-                    <th>Status</th>
+                    <th>Garage & Category</th>
+                    <th>Technician Contact</th>
+                    <th>Corridor / Address</th>
+                    <th>Approval Status</th>
+                    <th>Live Status</th>
                     <th>Rating</th>
-                    <th>Verification Actions</th>
+                    <th>Admin Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {mechanics.map((m) => (
-                    <tr key={m._id}>
-                      <td>
-                        <strong>{m.shopName}</strong>
-                        <div className="text-muted small">Exp: {m.experience} yrs • Radius: {m.serviceRadius}km</div>
-                      </td>
-                      <td>{m.name}</td>
-                      <td>
-                        <div>{m.phone}</div>
-                        <small className="text-muted">{m.email}</small>
-                      </td>
-                      <td>
-                        <small className="text-muted line-clamp-1">{m.shopAddress}, {m.city}</small>
-                      </td>
-                      <td>
-                        <span className={`badge ${m.isOnline ? 'badge-online' : 'badge-offline'} me-1`}>
-                          {m.isOnline ? 'Online' : 'Offline'}
-                        </span>
-                        <span className={`badge ${m.isActive ? 'bg-success' : 'bg-danger'}`}>
-                          {m.isActive ? 'Active' : 'Disabled'}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="badge bg-warning text-dark fw-bold">⭐ {m.rating || '4.8'}</span>
-                      </td>
-                      <td>
-                        <div className="d-flex gap-1">
-                          {m.isVerified ? (
-                            <button
-                              className="btn btn-outline-danger btn-sm py-0 px-2"
-                              onClick={() => handleVerifyMechanic(m._id, false)}
-                              title="Revoke Verification"
-                            >
-                              Revoke
-                            </button>
-                          ) : (
-                            <button
-                              className="btn btn-success btn-sm py-0 px-2 fw-bold"
-                              onClick={() => handleVerifyMechanic(m._id, true)}
-                            >
-                              ✓ Verify
-                            </button>
-                          )}
-                          <button
-                            className="btn btn-outline-secondary btn-sm py-0 px-2"
-                            onClick={() => handleToggleMechanicActive(m._id)}
-                          >
-                            {m.isActive ? 'Deactivate' : 'Activate'}
-                          </button>
-                        </div>
+                  {mechanics.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="text-center py-4 text-muted">
+                        No mechanics found matching "{mechanicFilter}" status.
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    mechanics.map((m) => {
+                      const status = m.approvalStatus || (m.isVerified ? 'Approved' : 'Pending');
+                      return (
+                        <tr key={m._id}>
+                          <td>
+                            <strong>{m.shopName}</strong>
+                            <div className="d-flex align-items-center gap-1 mt-1">
+                              <span className="badge bg-secondary" style={{ fontSize: '0.68rem' }}>
+                                {m.serviceCategory || 'Both'}
+                              </span>
+                              <span className="text-muted" style={{ fontSize: '0.72rem' }}>
+                                Exp: {m.experience || 2} yrs • {m.serviceRadius || 25} km
+                              </span>
+                            </div>
+                          </td>
+                          <td>
+                            <div className="fw-bold text-dark">{m.name}</div>
+                            <div>{m.phone}</div>
+                            <small className="text-muted">{m.email}</small>
+                          </td>
+                          <td>
+                            <div className="fw-semibold text-primary">{m.serviceArea || 'Ahmedabad'}</div>
+                            <small className="text-muted line-clamp-1">{m.shopAddress}</small>
+                          </td>
+                          <td>
+                            {status === 'Approved' ? (
+                              <span className="badge bg-success">
+                                <i className="bi bi-patch-check-fill me-1"></i> Approved
+                              </span>
+                            ) : status === 'Pending' ? (
+                              <span className="badge bg-warning text-dark">
+                                <i className="bi bi-hourglass-split me-1"></i> Pending
+                              </span>
+                            ) : status === 'Rejected' ? (
+                              <span className="badge bg-danger" title={m.rejectionReason}>
+                                <i className="bi bi-x-circle-fill me-1"></i> Rejected
+                              </span>
+                            ) : (
+                              <span className="badge bg-dark" title={m.suspensionReason}>
+                                <i className="bi bi-slash-circle-fill me-1"></i> Suspended
+                              </span>
+                            )}
+                          </td>
+                          <td>
+                            <span className={`badge ${m.isOnline ? 'badge-online' : 'badge-offline'}`}>
+                              {m.isOnline ? 'Online' : 'Offline'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className="badge bg-warning text-dark fw-bold">⭐ {m.rating || '4.8'}</span>
+                          </td>
+                          <td>
+                            <div className="d-flex gap-1 flex-wrap">
+                              <button
+                                className="btn btn-outline-primary btn-sm py-0 px-2"
+                                onClick={() => setMechanicDetailModal({ show: true, mechanic: m })}
+                                title="View profile & uploaded ID proof"
+                              >
+                                View
+                              </button>
+
+                              {status === 'Pending' && (
+                                <>
+                                  <button
+                                    className="btn btn-success btn-sm py-0 px-2 fw-bold"
+                                    onClick={() => handleApproveMechanic(m._id)}
+                                    title="Approve & Verify"
+                                  >
+                                    ✓ Approve
+                                  </button>
+                                  <button
+                                    className="btn btn-outline-danger btn-sm py-0 px-2"
+                                    onClick={() => handleOpenActionModal('reject', m)}
+                                    title="Reject application"
+                                  >
+                                    ✗ Reject
+                                  </button>
+                                </>
+                              )}
+
+                              {status === 'Approved' && (
+                                <button
+                                  className="btn btn-outline-danger btn-sm py-0 px-2"
+                                  onClick={() => handleOpenActionModal('suspend', m)}
+                                  title="Suspend mechanic account"
+                                >
+                                  Suspend
+                                </button>
+                              )}
+
+                              {status === 'Rejected' && (
+                                <button
+                                  className="btn btn-outline-success btn-sm py-0 px-2 fw-bold"
+                                  onClick={() => handleApproveMechanic(m._id)}
+                                  title="Re-approve application"
+                                >
+                                  Approve
+                                </button>
+                              )}
+
+                              {status === 'Suspended' && (
+                                <button
+                                  className="btn btn-success btn-sm py-0 px-2 fw-bold"
+                                  onClick={() => handleReactivateMechanic(m._id)}
+                                  title="Reactivate mechanic account"
+                                >
+                                  Reactivate
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1303,6 +1464,212 @@ const AdminDashboard = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject / Suspend Reason Modal */}
+      {actionModal.show && actionModal.mechanic && (
+        <div className="modal show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+              <div className="modal-header bg-danger text-white py-3">
+                <h5 className="modal-title fw-bold">
+                  {actionModal.type === 'reject' ? 'Reject Mechanic Application' : 'Suspend Mechanic Account'}
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setActionModal({ show: false, type: 'reject', mechanic: null, reason: '' })}
+                ></button>
+              </div>
+              <form onSubmit={handleActionSubmit}>
+                <div className="modal-body p-4">
+                  <p className="small text-muted mb-3">
+                    Target Mechanic: <strong>{actionModal.mechanic.name}</strong> ({actionModal.mechanic.shopName})
+                  </p>
+                  <label className="form-label fw-bold small">
+                    {actionModal.type === 'reject' ? 'Reason for Rejection *' : 'Reason for Suspension *'}
+                  </label>
+                  <textarea
+                    className="form-control"
+                    rows="3"
+                    placeholder={
+                      actionModal.type === 'reject'
+                        ? 'e.g. Identity document unreadable or garage address unverified in Ahmedabad.'
+                        : 'e.g. Repeated customer complaints or invalid license documentation.'
+                    }
+                    value={actionModal.reason}
+                    onChange={(e) => setActionModal({ ...actionModal, reason: e.target.value })}
+                    required
+                  ></textarea>
+                  <div className="form-text small text-muted mt-2">
+                    This reason will be displayed on the mechanic's dashboard and sent via notification.
+                  </div>
+                </div>
+                <div className="modal-footer bg-light">
+                  <button
+                    type="button"
+                    className="btn btn-secondary rounded-pill px-3"
+                    onClick={() => setActionModal({ show: false, type: 'reject', mechanic: null, reason: '' })}
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-danger rounded-pill px-4 fw-bold">
+                    Confirm {actionModal.type === 'reject' ? 'Rejection' : 'Suspension'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mechanic Full Details Modal (including ID Document proof) */}
+      {mechanicDetailModal.show && mechanicDetailModal.mechanic && (
+        <div className="modal show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+              <div className="modal-header bg-navy text-white py-3">
+                <h5 className="modal-title fw-bold">Mechanic Partner Profile & Verification</h5>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setMechanicDetailModal({ show: false, mechanic: null })}
+                ></button>
+              </div>
+              <div className="modal-body p-4">
+                <div className="row g-3">
+                  <div className="col-md-6">
+                    <label className="text-muted small fw-semibold">Garage / Shop Name:</label>
+                    <div className="fw-bold fs-6">{mechanicDetailModal.mechanic.shopName}</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="text-muted small fw-semibold">Technician Full Name:</label>
+                    <div className="fw-bold fs-6">{mechanicDetailModal.mechanic.name}</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="text-muted small fw-semibold">Mobile Phone:</label>
+                    <div>{mechanicDetailModal.mechanic.phone}</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="text-muted small fw-semibold">Email Address:</label>
+                    <div>{mechanicDetailModal.mechanic.email}</div>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="text-muted small fw-semibold">Service Category:</label>
+                    <div>
+                      <span className="badge bg-primary">{mechanicDetailModal.mechanic.serviceCategory || 'Both'}</span>
+                    </div>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="text-muted small fw-semibold">Ahmedabad Area:</label>
+                    <div className="fw-semibold text-dark">{mechanicDetailModal.mechanic.serviceArea || 'Ahmedabad'}</div>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="text-muted small fw-semibold">Radius & Experience:</label>
+                    <div>{mechanicDetailModal.mechanic.serviceRadius || 25} km • {mechanicDetailModal.mechanic.experience || 2} yrs exp</div>
+                  </div>
+                  <div className="col-12">
+                    <label className="text-muted small fw-semibold">Garage Address:</label>
+                    <div>{mechanicDetailModal.mechanic.shopAddress}, {mechanicDetailModal.mechanic.city}, {mechanicDetailModal.mechanic.state} - {mechanicDetailModal.mechanic.pincode}</div>
+                  </div>
+                  <div className="col-12">
+                    <label className="text-muted small fw-semibold">Services Offered:</label>
+                    <div className="d-flex flex-wrap gap-1 mt-1">
+                      {mechanicDetailModal.mechanic.services?.map((s, idx) => (
+                        <span key={idx} className="badge bg-light text-dark border">
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Verification Status */}
+                  <div className="col-12 border-top pt-3">
+                    <label className="text-muted small fw-semibold">Current Verification Status:</label>
+                    <div className="d-flex align-items-center gap-2 mt-1">
+                      <span className={`badge ${
+                        mechanicDetailModal.mechanic.approvalStatus === 'Approved'
+                          ? 'bg-success'
+                          : mechanicDetailModal.mechanic.approvalStatus === 'Pending'
+                          ? 'bg-warning text-dark'
+                          : 'bg-danger'
+                      }`}>
+                        {mechanicDetailModal.mechanic.approvalStatus || (mechanicDetailModal.mechanic.isVerified ? 'Approved' : 'Pending')}
+                      </span>
+                      {mechanicDetailModal.mechanic.rejectionReason && (
+                        <span className="text-danger small">
+                          (Rejection reason: {mechanicDetailModal.mechanic.rejectionReason})
+                        </span>
+                      )}
+                      {mechanicDetailModal.mechanic.suspensionReason && (
+                        <span className="text-danger small">
+                          (Suspension reason: {mechanicDetailModal.mechanic.suspensionReason})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Uploaded ID Document */}
+                  <div className="col-12 border-top pt-3">
+                    <label className="text-muted small fw-semibold">Identity / Shop Verification Document:</label>
+                    {mechanicDetailModal.mechanic.idDocument ? (
+                      <div className="mt-2">
+                        <a
+                          href={mechanicDetailModal.mechanic.idDocument}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn btn-outline-primary btn-sm"
+                        >
+                          <i className="bi bi-file-earmark-check me-1"></i> View Uploaded Proof Document
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="text-muted small fst-italic mt-1">No separate document uploaded.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer bg-light justify-content-between">
+                <button
+                  type="button"
+                  className="btn btn-secondary rounded-pill px-3"
+                  onClick={() => setMechanicDetailModal({ show: false, mechanic: null })}
+                >
+                  Close
+                </button>
+                <div className="d-flex gap-2">
+                  {mechanicDetailModal.mechanic.approvalStatus !== 'Approved' && (
+                    <button
+                      type="button"
+                      className="btn btn-success rounded-pill px-4 fw-bold"
+                      onClick={() => handleApproveMechanic(mechanicDetailModal.mechanic._id)}
+                    >
+                      ✓ Approve Mechanic
+                    </button>
+                  )}
+                  {mechanicDetailModal.mechanic.approvalStatus === 'Pending' && (
+                    <button
+                      type="button"
+                      className="btn btn-danger rounded-pill px-4 fw-bold"
+                      onClick={() => handleOpenActionModal('reject', mechanicDetailModal.mechanic)}
+                    >
+                      ✗ Reject
+                    </button>
+                  )}
+                  {mechanicDetailModal.mechanic.approvalStatus === 'Approved' && (
+                    <button
+                      type="button"
+                      className="btn btn-outline-danger rounded-pill px-4"
+                      onClick={() => handleOpenActionModal('suspend', mechanicDetailModal.mechanic)}
+                    >
+                      Suspend Account
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

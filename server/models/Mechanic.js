@@ -25,7 +25,17 @@ const mechanicSchema = new mongoose.Schema(
     },
     shopName: {
       type: String,
-      required: [true, 'Please provide shop or business name'],
+      trim: true,
+      default: 'Highway Rescue Partner Garage',
+    },
+    serviceCategory: {
+      type: String,
+      enum: ['Bike', 'Car', 'Both'],
+      default: 'Both',
+    },
+    serviceArea: {
+      type: String,
+      default: 'Ahmedabad',
       trim: true,
     },
     services: {
@@ -77,6 +87,19 @@ const mechanicSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    approvalStatus: {
+      type: String,
+      enum: ['Pending', 'Approved', 'Rejected', 'Suspended'],
+      default: 'Pending',
+    },
+    rejectionReason: {
+      type: String,
+      default: '',
+    },
+    suspensionReason: {
+      type: String,
+      default: '',
+    },
     isVerified: {
       type: Boolean,
       default: false,
@@ -94,11 +117,15 @@ const mechanicSchema = new mongoose.Schema(
     },
     isOnline: {
       type: Boolean,
-      default: true,
+      default: false, // Must be approved first, then toggled online by mechanic
     },
     isActive: {
       type: Boolean,
       default: true,
+    },
+    isDemo: {
+      type: Boolean,
+      default: false,
     },
     rating: {
       type: Number,
@@ -126,5 +153,7 @@ const mechanicSchema = new mongoose.Schema(
 
 // Create 2dsphere index for GeoJSON location searches
 mechanicSchema.index({ location: '2dsphere' });
+mechanicSchema.index({ approvalStatus: 1 });
+mechanicSchema.index({ isOnline: 1 });
 
 module.exports = mongoose.model('Mechanic', mechanicSchema);

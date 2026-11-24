@@ -5,6 +5,10 @@ const {
   getAllUsers,
   toggleBlockUser,
   getAllMechanics,
+  approveMechanic,
+  rejectMechanic,
+  suspendMechanic,
+  reactivateMechanic,
   verifyMechanic,
   toggleMechanicActive,
   getAllBookings,
@@ -25,6 +29,10 @@ router.get('/users', getAllUsers);
 router.put('/users/:id/block', toggleBlockUser);
 
 router.get('/mechanics', getAllMechanics);
+router.put('/mechanics/:id/approve', approveMechanic);
+router.put('/mechanics/:id/reject', rejectMechanic);
+router.put('/mechanics/:id/suspend', suspendMechanic);
+router.put('/mechanics/:id/reactivate', reactivateMechanic);
 router.put('/mechanics/:id/verify', verifyMechanic);
 router.put('/mechanics/:id/toggle-active', toggleMechanicActive);
 

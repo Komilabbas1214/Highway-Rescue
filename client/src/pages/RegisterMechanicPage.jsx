@@ -21,7 +21,10 @@ const RegisterMechanicPage = () => {
     phone: '',
     email: '',
     password: '',
+    confirmPassword: '',
+    serviceCategory: 'Both',
     shopName: '',
+    serviceArea: 'SG Highway, Ahmedabad',
     experience: 3,
     shopAddress: '',
     city: 'Ahmedabad',
@@ -83,6 +86,26 @@ const RegisterMechanicPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    if (!formData.name.trim() || !formData.phone.trim() || !formData.email.trim() || !formData.password) {
+      toast.error('Please fill in all required registration fields.');
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      toast.error('Passwords do not match. Please verify your password.');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast.error('Password must be at least 6 characters long.');
+      return;
+    }
+
+    if (!formData.shopAddress.trim()) {
+      toast.error('Please provide your workshop/garage address.');
+      return;
+    }
+
     if (selectedServices.length === 0) {
       toast.error('Please select at least one service offered by your shop.');
       return;
@@ -102,6 +125,7 @@ const RegisterMechanicPage = () => {
     setSubmitting(false);
 
     if (res?.success) {
+      toast.info('Your registration has been submitted. Awaiting admin verification.');
       navigate('/mechanic/dashboard');
     }
   };
@@ -118,7 +142,7 @@ const RegisterMechanicPage = () => {
                 </span>
                 <h3 className="fw-bold text-navy mb-1">Mechanic & Garage Partner Registration</h3>
                 <p className="text-muted small">
-                  Connect your highway repair garage or towing fleet to receive nearby driver breakdown requests.
+                  Register as an authorized Highway Rescue service partner in Ahmedabad.
                 </p>
               </div>
 
@@ -126,7 +150,7 @@ const RegisterMechanicPage = () => {
               <div className="alert alert-warning border-warning small mb-4 d-flex align-items-center gap-2">
                 <i className="bi bi-shield-exclamation fs-4 text-warning"></i>
                 <div>
-                  <strong>Mandatory Verification Notice:</strong> For driver safety on highways, all new mechanics are registered in pending review status. Our administrator will verify your shop identity before you appear as a "Verified Partner".
+                  <strong>Mandatory Verification Notice:</strong> For driver safety on highways, all registered mechanics begin in <strong>Pending</strong> review status. Our administrator verifies your profile before you can go online to receive driver dispatches.
                 </div>
               </div>
 
@@ -148,15 +172,14 @@ const RegisterMechanicPage = () => {
                   </div>
 
                   <div className="col-md-6">
-                    <label className="form-label fw-bold small">Shop / Garage / Business Name *</label>
+                    <label className="form-label fw-bold small">Garage / Business Name <span className="text-muted fw-normal">(Optional)</span></label>
                     <input
                       type="text"
                       className="form-control"
-                      placeholder="e.g. Patel 24x7 Highway Auto Garage"
+                      placeholder="e.g. Patel 24x7 Auto Care"
                       name="shopName"
                       value={formData.shopName}
                       onChange={handleInputChange}
-                      required
                     />
                   </div>
                 </div>
@@ -167,7 +190,7 @@ const RegisterMechanicPage = () => {
                     <input
                       type="tel"
                       className="form-control"
-                      placeholder="e.g. +91 98250 12345"
+                      placeholder="e.g. 9825012345"
                       name="phone"
                       value={formData.phone}
                       onChange={handleInputChange}
@@ -180,7 +203,7 @@ const RegisterMechanicPage = () => {
                     <input
                       type="email"
                       className="form-control"
-                      placeholder="e.g. patel.auto@example.com"
+                      placeholder="e.g. ramesh.patel@gmail.com"
                       name="email"
                       value={formData.email}
                       onChange={handleInputChange}
@@ -189,7 +212,7 @@ const RegisterMechanicPage = () => {
                   </div>
                 </div>
 
-                <div className="row g-3 mb-4">
+                <div className="row g-3 mb-3">
                   <div className="col-md-6">
                     <label className="form-label fw-bold small">Account Password *</label>
                     <input
@@ -204,7 +227,56 @@ const RegisterMechanicPage = () => {
                   </div>
 
                   <div className="col-md-6">
-                    <label className="form-label fw-bold small">Years of Mechanical Experience *</label>
+                    <label className="form-label fw-bold small">Confirm Password *</label>
+                    <input
+                      type="password"
+                      className="form-control"
+                      placeholder="Re-enter password"
+                      name="confirmPassword"
+                      value={formData.confirmPassword}
+                      onChange={handleInputChange}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="row g-3 mb-4">
+                  <div className="col-md-4">
+                    <label className="form-label fw-bold small">Service Category *</label>
+                    <select
+                      className="form-select"
+                      name="serviceCategory"
+                      value={formData.serviceCategory}
+                      onChange={handleInputChange}
+                      required
+                    >
+                      <option value="Both">Both (Cars & Bikes)</option>
+                      <option value="Car">Cars Only</option>
+                      <option value="Bike">Bikes Only</option>
+                    </select>
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label fw-bold small">Ahmedabad Service Area *</label>
+                    <select
+                      className="form-select"
+                      name="serviceArea"
+                      value={formData.serviceArea}
+                      onChange={handleInputChange}
+                      required
+                    >
+                      <option value="SG Highway, Ahmedabad">SG Highway (ISCON / Pakwan / Gota)</option>
+                      <option value="SP Ring Road - Bopal / Shela">SP Ring Road (Bopal / Shela / Ghuma)</option>
+                      <option value="Sanand Highway / Changodar">Sanand Highway / Changodar GIDC</option>
+                      <option value="Narol - Naroda NH48 Corridor">Narol - Naroda NH48 Corridor</option>
+                      <option value="Ashram Road / Central Ahmedabad">Ashram Road / Central Ahmedabad</option>
+                      <option value="Gandhinagar - Sarkhej Corridor">Gandhinagar - Sarkhej Corridor</option>
+                      <option value="Ahmedabad Citywide">Ahmedabad (All Corridors)</option>
+                    </select>
+                  </div>
+
+                  <div className="col-md-4">
+                    <label className="form-label fw-bold small">Years of Experience *</label>
                     <input
                       type="number"
                       className="form-control"

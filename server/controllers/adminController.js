@@ -13,8 +13,17 @@ const getAdminDashboard = async (req, res, next) => {
   try {
     const totalCustomers = await User.countDocuments({ role: 'customer' });
     const totalMechanics = await Mechanic.countDocuments();
-    const verifiedMechanics = await Mechanic.countDocuments({ isVerified: true });
-    const pendingMechanics = await Mechanic.countDocuments({ isVerified: false });
+    const verifiedMechanics = await Mechanic.countDocuments({
+      $or: [{ approvalStatus: 'Approved' }, { isVerified: true }],
+    });
+    const pendingMechanics = await Mechanic.countDocuments({
+      $or: [
+        { approvalStatus: 'Pending' },
+        { isVerified: false, approvalStatus: { $nin: ['Rejected', 'Suspended'] } },
+      ],
+    });
+    const rejectedMechanics = await Mechanic.countDocuments({ approvalStatus: 'Rejected' });
+    const suspendedMechanics = await Mechanic.countDocuments({ approvalStatus: 'Suspended' });
 
     const totalBookings = await Booking.countDocuments();
     const pendingBookings = await Booking.countDocuments({ status: 'Pending' });
@@ -42,6 +51,8 @@ const getAdminDashboard = async (req, res, next) => {
         totalMechanics,
         verifiedMechanics,
         pendingMechanics,
+        rejectedMechanics,
+        suspendedMechanics,
         totalBookings,
         pendingBookings,
         activeBookings,
@@ -128,10 +139,12 @@ const toggleBlockUser = async (req, res, next) => {
 // @access  Private (Admin)
 const getAllMechanics = async (req, res, next) => {
   try {
-    const { verified, search } = req.query;
+    const { verified, search, approvalStatus } = req.query;
     const query = {};
 
-    if (verified !== undefined && verified !== '') {
+    if (approvalStatus && approvalStatus !== 'All') {
+      query.approvalStatus = approvalStatus;
+    } else if (verified !== undefined && verified !== '') {
       query.isVerified = verified === 'true';
     }
 
@@ -141,6 +154,7 @@ const getAllMechanics = async (req, res, next) => {
         { shopName: { $regex: search, $options: 'i' } },
         { phone: { $regex: search, $options: 'i' } },
         { city: { $regex: search, $options: 'i' } },
+        { serviceArea: { $regex: search, $options: 'i' } },
       ];
     }
 
@@ -158,7 +172,196 @@ const getAllMechanics = async (req, res, next) => {
   }
 };
 
-// @desc    Verify or reject mechanic application
+// @desc    Approve a pending mechanic application
+// @route   PUT /api/admin/mechanics/:id/approve
+// @access  Private (Admin)
+const approveMechanic = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findById(req.params.id);
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found',
+      });
+    }
+
+    mechanic.approvalStatus = 'Approved';
+    mechanic.isVerified = true;
+    mechanic.isActive = true;
+    mechanic.verifiedAt = new Date();
+    mechanic.verifiedBy = req.user._id;
+    mechanic.rejectionReason = '';
+    mechanic.suspensionReason = '';
+    if (req.body.verificationNotes) {
+      mechanic.verificationNotes = req.body.verificationNotes;
+    }
+
+    await mechanic.save();
+
+    // Socket events
+    notifyMechanic(mechanic._id.toString(), 'mechanicApproved', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Approved',
+      isVerified: true,
+      message: 'Congratulations! Your mechanic account has been verified and approved by admin. You can now toggle online to accept service requests.',
+    });
+    notifyMechanic(mechanic._id.toString(), 'mechanicStatusChanged', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Approved',
+      isVerified: true,
+      isActive: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Mechanic ${mechanic.name} (${mechanic.shopName}) has been approved and verified.`,
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reject a mechanic application with reason
+// @route   PUT /api/admin/mechanics/:id/reject
+// @access  Private (Admin)
+const rejectMechanic = async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const mechanic = await Mechanic.findById(req.params.id);
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found',
+      });
+    }
+
+    const rejectionReason = reason && reason.trim() ? reason.trim() : 'Application details or identity proof requirements not met.';
+
+    mechanic.approvalStatus = 'Rejected';
+    mechanic.isVerified = false;
+    mechanic.isOnline = false;
+    mechanic.rejectionReason = rejectionReason;
+
+    await mechanic.save();
+
+    // Socket events
+    notifyMechanic(mechanic._id.toString(), 'mechanicRejected', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Rejected',
+      reason: rejectionReason,
+      message: `Your mechanic application was rejected: ${rejectionReason}`,
+    });
+    notifyMechanic(mechanic._id.toString(), 'mechanicStatusChanged', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Rejected',
+      isVerified: false,
+      isOnline: false,
+      rejectionReason,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Mechanic ${mechanic.name} (${mechanic.shopName}) application rejected.`,
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Suspend an approved mechanic with reason
+// @route   PUT /api/admin/mechanics/:id/suspend
+// @access  Private (Admin)
+const suspendMechanic = async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    const mechanic = await Mechanic.findById(req.params.id);
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found',
+      });
+    }
+
+    const suspensionReason = reason && reason.trim() ? reason.trim() : 'Account suspended due to policy violation or customer complaints.';
+
+    mechanic.approvalStatus = 'Suspended';
+    mechanic.isActive = false;
+    mechanic.isOnline = false;
+    mechanic.suspensionReason = suspensionReason;
+
+    await mechanic.save();
+
+    // Socket events
+    notifyMechanic(mechanic._id.toString(), 'mechanicSuspended', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Suspended',
+      reason: suspensionReason,
+      message: `Your mechanic account has been suspended: ${suspensionReason}`,
+    });
+    notifyMechanic(mechanic._id.toString(), 'mechanicStatusChanged', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Suspended',
+      isActive: false,
+      isOnline: false,
+      suspensionReason,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Mechanic ${mechanic.name} (${mechanic.shopName}) has been suspended.`,
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reactivate a suspended mechanic
+// @route   PUT /api/admin/mechanics/:id/reactivate
+// @access  Private (Admin)
+const reactivateMechanic = async (req, res, next) => {
+  try {
+    const mechanic = await Mechanic.findById(req.params.id);
+    if (!mechanic) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mechanic profile not found',
+      });
+    }
+
+    mechanic.approvalStatus = 'Approved';
+    mechanic.isActive = true;
+    mechanic.isVerified = true;
+    mechanic.suspensionReason = '';
+
+    await mechanic.save();
+
+    // Socket events
+    notifyMechanic(mechanic._id.toString(), 'mechanicReactivated', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Approved',
+      message: 'Your account has been reactivated. You can now toggle online to accept service requests.',
+    });
+    notifyMechanic(mechanic._id.toString(), 'mechanicStatusChanged', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: 'Approved',
+      isActive: true,
+      isVerified: true,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Mechanic ${mechanic.name} (${mechanic.shopName}) has been reactivated.`,
+      mechanic,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify or reject mechanic application (legacy support)
 // @route   PUT /api/admin/mechanics/:id/verify
 // @access  Private (Admin)
 const verifyMechanic = async (req, res, next) => {
@@ -174,6 +377,12 @@ const verifyMechanic = async (req, res, next) => {
     }
 
     mechanic.isVerified = isVerified;
+    mechanic.approvalStatus = isVerified ? 'Approved' : 'Rejected';
+    if (!isVerified) {
+      mechanic.isOnline = false;
+    } else {
+      mechanic.isActive = true;
+    }
     mechanic.verifiedAt = isVerified ? new Date() : null;
     mechanic.verifiedBy = isVerified ? req.user._id : null;
     if (verificationNotes !== undefined) {
@@ -185,9 +394,15 @@ const verifyMechanic = async (req, res, next) => {
     // Notify mechanic via Socket
     notifyMechanic(mechanic._id.toString(), 'verificationStatusUpdated', {
       isVerified: mechanic.isVerified,
+      approvalStatus: mechanic.approvalStatus,
       message: isVerified
         ? 'Congratulations! Your mechanic account has been verified by the admin. You are now eligible to accept service requests.'
         : 'Your verification status has been updated.',
+    });
+    notifyMechanic(mechanic._id.toString(), 'mechanicStatusChanged', {
+      mechanicId: mechanic._id.toString(),
+      approvalStatus: mechanic.approvalStatus,
+      isVerified: mechanic.isVerified,
     });
 
     res.status(200).json({
@@ -214,6 +429,9 @@ const toggleMechanicActive = async (req, res, next) => {
     }
 
     mechanic.isActive = !mechanic.isActive;
+    if (!mechanic.isActive) {
+      mechanic.isOnline = false;
+    }
     await mechanic.save();
 
     res.status(200).json({
@@ -691,6 +909,10 @@ module.exports = {
   getAllUsers,
   toggleBlockUser,
   getAllMechanics,
+  approveMechanic,
+  rejectMechanic,
+  suspendMechanic,
+  reactivateMechanic,
   verifyMechanic,
   toggleMechanicActive,
   getAllBookings,

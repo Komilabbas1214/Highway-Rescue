@@ -298,10 +298,10 @@ const NearbyServicesPage = () => {
                   </div>
                 ) : mechanics.length === 0 && petrolPumps.length === 0 ? (
                   <div className="text-center py-5">
-                    <i className="bi bi-geo-alt-slash fs-1 text-muted"></i>
-                    <h6 className="fw-bold mt-2">No Providers In Selected Radius</h6>
+                    <i className="bi bi-shield-slash fs-1 text-muted"></i>
+                    <h6 className="fw-bold mt-2">No verified mechanics are currently available in your area.</h6>
                     <p className="text-muted small">
-                      Try expanding the search radius to 20 km or 50 km, or switch to All Services.
+                      Try expanding the search radius or request a direct highway broadcast dispatch.
                     </p>
                     <button
                       className="btn btn-outline-primary btn-sm rounded-pill"
@@ -312,6 +312,14 @@ const NearbyServicesPage = () => {
                   </div>
                 ) : (
                   <div className="d-flex flex-column gap-3">
+                    {/* Notice if mechanics are empty in selected tab */}
+                    {mechanics.length === 0 && (
+                      <div className="alert alert-light border small text-muted d-flex align-items-center gap-2 mb-1">
+                        <i className="bi bi-info-circle text-primary"></i>
+                        <span>No verified mechanics are currently available in your area.</span>
+                      </div>
+                    )}
+
                     {/* Mechanics List */}
                     {(viewType === 'all' || viewType === 'mechanics') &&
                       mechanics.map((mech) => (

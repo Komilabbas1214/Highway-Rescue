@@ -23,8 +23,11 @@ const MechanicDashboard = () => {
     acceptedRequests: 0,
     completedJobs: 0,
     totalEarnings: 0,
-    isOnline: mechanic?.isOnline || true,
+    isOnline: mechanic?.isOnline || false,
     isVerified: mechanic?.isVerified || false,
+    approvalStatus: mechanic?.approvalStatus || 'Pending',
+    rejectionReason: mechanic?.rejectionReason || '',
+    suspensionReason: mechanic?.suspensionReason || '',
     rating: mechanic?.rating || 4.8,
   });
 
@@ -138,11 +141,41 @@ const MechanicDashboard = () => {
       fetchMechanicData();
     });
 
+    // 5. Real-time Account Approval Events
+    socket.on('mechanicApproved', ({ message }) => {
+      toast.success(message || '🎉 Your account has been verified and approved by admin!');
+      fetchMechanicData();
+    });
+
+    socket.on('mechanicRejected', ({ reason, message }) => {
+      toast.error(message || `Your application was rejected: ${reason}`);
+      fetchMechanicData();
+    });
+
+    socket.on('mechanicSuspended', ({ reason, message }) => {
+      toast.error(message || `Your account was suspended: ${reason}`);
+      fetchMechanicData();
+    });
+
+    socket.on('mechanicReactivated', ({ message }) => {
+      toast.success(message || 'Your account has been reactivated!');
+      fetchMechanicData();
+    });
+
+    socket.on('mechanicStatusChanged', () => {
+      fetchMechanicData();
+    });
+
     return () => {
       socket.off('newBookingRequest');
       socket.off('bookingTaken');
       socket.off('bookingCancelled');
       socket.off('settlementUpdated');
+      socket.off('mechanicApproved');
+      socket.off('mechanicRejected');
+      socket.off('mechanicSuspended');
+      socket.off('mechanicReactivated');
+      socket.off('mechanicStatusChanged');
       stopRingtone();
     };
   }, [socket, stats.isOnline, stats.isVerified]);
@@ -163,8 +196,27 @@ const MechanicDashboard = () => {
     }
   };
 
-  // Handle Online/Offline toggle
+  // Handle Online/Offline toggle with approval validation
   const handleToggleOnline = async () => {
+    if (!stats.isOnline) {
+      const isApproved =
+        (stats.approvalStatus === 'Approved' || stats.approvalStatus === undefined) &&
+        stats.isVerified;
+
+      if (!isApproved) {
+        if (stats.approvalStatus === 'Pending') {
+          toast.warn('Your account is under verification. You will be able to go online once approved by admin.');
+        } else if (stats.approvalStatus === 'Rejected') {
+          toast.error(`Your application was rejected: ${stats.rejectionReason || 'Please contact support.'}`);
+        } else if (stats.approvalStatus === 'Suspended') {
+          toast.error(`Your account has been suspended: ${stats.suspensionReason || 'Please contact support.'}`);
+        } else {
+          toast.warn('Account approval required to go online.');
+        }
+        return;
+      }
+    }
+
     const newStatus = !stats.isOnline;
     const res = await toggleMechanicAvailability(newStatus);
     if (res?.success) {
@@ -290,11 +342,19 @@ const MechanicDashboard = () => {
         >
           <div className="d-flex flex-wrap justify-content-between align-items-center gap-3">
             <div>
-              <div className="d-flex align-items-center gap-2 mb-1">
+              <div className="d-flex align-items-center gap-2 mb-1 flex-wrap">
                 <span className="badge bg-warning text-dark fw-bold">GARAGE PARTNER DISPATCH</span>
-                {stats.isVerified ? (
+                {stats.approvalStatus === 'Approved' ? (
                   <span className="badge bg-success">
-                    <i className="bi bi-patch-check-fill me-1"></i> Admin Verified
+                    <i className="bi bi-patch-check-fill me-1"></i> Admin Approved
+                  </span>
+                ) : stats.approvalStatus === 'Rejected' ? (
+                  <span className="badge bg-danger">
+                    <i className="bi bi-x-circle-fill me-1"></i> Application Rejected
+                  </span>
+                ) : stats.approvalStatus === 'Suspended' ? (
+                  <span className="badge bg-danger">
+                    <i className="bi bi-slash-circle-fill me-1"></i> Account Suspended
                   </span>
                 ) : (
                   <span className="badge bg-warning text-dark">
@@ -331,14 +391,61 @@ const MechanicDashboard = () => {
                 </span>
               </div>
               <button
-                className={`btn btn-sm fw-bold px-3 py-2 ${stats.isOnline ? 'btn-danger' : 'btn-success'}`}
+                className={`btn btn-sm fw-bold px-3 py-2 ${
+                  stats.isOnline
+                    ? 'btn-danger'
+                    : stats.approvalStatus === 'Approved' && stats.isVerified
+                    ? 'btn-success'
+                    : 'btn-secondary opacity-75'
+                }`}
                 onClick={handleToggleOnline}
               >
-                {stats.isOnline ? 'Go Offline' : 'Go Online'}
+                {stats.isOnline
+                  ? 'Go Offline'
+                  : stats.approvalStatus === 'Approved' && stats.isVerified
+                  ? 'Go Online'
+                  : 'Go Online (Approval Required)'}
               </button>
             </div>
           </div>
         </div>
+
+        {/* Status Lifecycle Alerts */}
+        {stats.approvalStatus === 'Pending' && (
+          <div className="alert alert-warning border-warning d-flex align-items-center gap-3 p-3 mb-4 rounded-3 shadow-sm">
+            <i className="bi bi-hourglass-split fs-2 text-warning flex-shrink-0"></i>
+            <div>
+              <h5 className="fw-bold mb-1">Your account is under verification</h5>
+              <p className="mb-0 text-muted small">
+                Thank you for registering! Our administrator is reviewing your garage profile and identity documents. You will be able to go online and receive customer assistance dispatches as soon as your account is approved.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {stats.approvalStatus === 'Rejected' && (
+          <div className="alert alert-danger border-danger d-flex align-items-center gap-3 p-3 mb-4 rounded-3 shadow-sm">
+            <i className="bi bi-x-circle-fill fs-2 text-danger flex-shrink-0"></i>
+            <div>
+              <h5 className="fw-bold mb-1">Application Rejected</h5>
+              <p className="mb-0 text-muted small">
+                <strong>Rejection Reason:</strong> {stats.rejectionReason || 'Submitted details or documentation did not meet platform safety requirements.'} Please contact Highway Rescue partner support for assistance.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {stats.approvalStatus === 'Suspended' && (
+          <div className="alert alert-danger border-danger d-flex align-items-center gap-3 p-3 mb-4 rounded-3 shadow-sm">
+            <i className="bi bi-slash-circle-fill fs-2 text-danger flex-shrink-0"></i>
+            <div>
+              <h5 className="fw-bold mb-1">Account Suspended</h5>
+              <p className="mb-0 text-muted small">
+                <strong>Suspension Reason:</strong> {stats.suspensionReason || 'Account suspended by platform administration.'} You cannot accept bookings while suspended. Please contact support to resolve this issue.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Audio Autoplay Alert Banner if Muted */}
         {!soundEnabled && (

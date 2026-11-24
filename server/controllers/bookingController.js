@@ -96,7 +96,13 @@ const createBooking = async (req, res, next) => {
     // Find eligible online mechanics
     let matchingMechanics = [];
     if (targetMechanic) {
-      if (targetMechanic.isOnline && targetMechanic.isActive && targetMechanic.isVerified) {
+      if (
+        targetMechanic.isOnline &&
+        targetMechanic.isActive &&
+        targetMechanic.isVerified &&
+        targetMechanic.approvalStatus === 'Approved' &&
+        !targetMechanic.isDemo
+      ) {
         matchingMechanics = [targetMechanic];
       }
     } else {
@@ -104,6 +110,8 @@ const createBooking = async (req, res, next) => {
         isOnline: true,
         isActive: true,
         isVerified: true,
+        approvalStatus: 'Approved',
+        isDemo: { $ne: true },
       });
 
       matchingMechanics = allOnlineMechanics.filter((m) => {
@@ -208,13 +216,20 @@ const getMechanicRequests = async (req, res, next) => {
     const mechLng = mechanic.location.coordinates[0];
     const mechLat = mechanic.location.coordinates[1];
 
-    // Find bookings assigned to this mechanic OR pending unassigned bookings
-    const bookings = await Booking.find({
-      $or: [
-        { mechanic: mechanic._id },
-        { mechanic: null, status: 'Pending' },
-      ],
-    })
+    const isApproved =
+      mechanic.approvalStatus === 'Approved' && mechanic.isVerified && mechanic.isActive;
+
+    // Find bookings assigned to this mechanic OR pending unassigned bookings (if mechanic is approved)
+    const bookingQuery = isApproved
+      ? {
+          $or: [
+            { mechanic: mechanic._id },
+            { mechanic: null, status: 'Pending' },
+          ],
+        }
+      : { mechanic: mechanic._id };
+
+    const bookings = await Booking.find(bookingQuery)
       .populate('customer', 'name phone email vehicleType vehicleNumber')
       .populate('mechanic', 'name shopName phone rating')
       .sort('-createdAt');
@@ -261,10 +276,10 @@ const acceptBooking = async (req, res, next) => {
       });
     }
 
-    if (!mechanic.isVerified) {
+    if (!mechanic.isVerified || mechanic.approvalStatus !== 'Approved' || !mechanic.isActive) {
       return res.status(403).json({
         success: false,
-        message: 'Your account is pending admin verification. You can accept jobs once verified.',
+        message: 'Your account is not approved to accept jobs. Please ensure your account is verified and active.',
       });
     }
 
